@@ -1,0 +1,410 @@
+import { useState, useRef, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
+import { formatTime, formatDateTime } from '../lib/format';
+import type { Task, Project, Log, ActiveAgent, CriterionStatus } from '../lib/types';
+import { CORE_SKILLS } from '../lib/skills';
+import Badge from './ui/Badge';
+import ProgressBar from './ui/ProgressBar';
+import SkillTag from './ui/SkillTag';
+import { IconEdit, IconPlay, IconStop, IconRuler, IconDownload, IconCircleCheck, IconImage, IconRetry, IconChevronDown, IconX } from './ui/Icons';
+
+interface TaskDetailProps {
+  task: Task;
+  project?: Project;
+  agent?: ActiveAgent;
+  logs: Log[];
+  onBack: () => void;
+  onEdit: () => void;
+  onStart: () => void;
+  onStop: () => void;
+  onRefineSpec: () => void;
+  onContinueSpec: () => void;
+  onApprovePlan: () => void;
+  onReplan: () => void;
+  onFetchAndFix: () => void;
+  onApprove: () => void;
+  onApprovePush: () => void;
+  onRejectPush: () => void;
+  onRevisePush: (prompt: string) => void;
+  onFixTests: () => void;
+  onDelete: () => void;
+}
+
+export default function TaskDetail({
+  task, project, agent, logs, onBack, onEdit, onStart, onStop,
+  onRefineSpec, onContinueSpec, onApprovePlan, onReplan, onFetchAndFix, onApprove,
+  onApprovePush, onRejectPush, onRevisePush, onFixTests, onDelete,
+}: TaskDetailProps) {
+  const { t } = useTranslation(['tasks', 'common']);
+  const [revisionPrompt, setRevisionPrompt] = useState('');
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({ spec: true, criteria: true });
+  const toggle = (key: string) => setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }));
+  const [activityHeight, setActivityHeight] = useState(160);
+  const dragRef = useRef<{ startY: number; startH: number } | null>(null);
+
+  const onDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = activityHeight;
+    dragRef.current = { startY, startH };
+
+    const onMove = (ev: MouseEvent) => {
+      if (!dragRef.current) return;
+      const delta = dragRef.current.startY - ev.clientY;
+      setActivityHeight(Math.max(80, Math.min(600, dragRef.current.startH + delta)));
+    };
+    const onUp = () => {
+      dragRef.current = null;
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, [activityHeight]);
+
+  const isEditable = ['queued', 'pr_feedback', 'completed', 'spec_feedback', 'test_fixing'].includes(task.status);
+  const isRunning = !['queued', 'completed', 'failed', 'pr_feedback', 'spec_feedback', 'plan_review', 'push_review', 'test_fixing'].includes(task.status);
+  const taskLogs = logs.filter((l) => l.projectName === task.projectName).slice(0, 30);
+
+  return (
+    <div className="space-y-5 w-full">
+      <div>
+        <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">{t('header.title')}</h2>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">{t('header.subtitle')}</p>
+      </div>
+      <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
+        {/* Header */}
+        <div className="px-6 py-5 border-b border-gray-100 dark:border-gray-700">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center text-white font-bold text-sm">
+                {task.projectName?.[0]?.toUpperCase()}
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">{task.title}</h2>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <span className="text-xs text-gray-400">{task.projectName}</span>
+                  <span className="text-xs text-gray-300">·</span>
+                  <span className="text-xs text-gray-400">{t('detail.createdAt', { date: formatDateTime(task.createdAt) })}</span>
+                  {task.reviewCycle > 0 && (
+                    <>
+                      <span className="text-xs text-gray-300">·</span>
+                      <span className="text-xs text-pink-500">{t('detail.cycle', { cycle: task.reviewCycle })}</span>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className={`text-xs px-1.5 py-0.5 rounded ${task.model === 'opus' ? 'bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400' : 'bg-gray-50 dark:bg-gray-700 text-gray-500 dark:text-gray-400'}`}>
+                {task.model}
+              </span>
+              {task.prNumber && (
+                <span className="text-xs bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 px-2 py-0.5 rounded font-mono">PR #{task.prNumber}</span>
+              )}
+              <Badge status={task.status} />
+            </div>
+          </div>
+        </div>
+
+        {/* Actions bar */}
+        <div className="px-6 py-3 border-b border-gray-100 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30 flex items-center gap-2">
+          <button onClick={onBack} className="text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 hover:border-gray-400 text-gray-700 dark:text-gray-300 font-medium px-3 py-1.5 rounded-lg">
+            &larr; {t('common:button.back')}
+          </button>
+          <button onClick={onEdit} className="text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 hover:border-indigo-300 text-gray-700 dark:text-gray-300 font-medium px-3 py-1.5 rounded-lg">
+            <IconEdit className="w-3 h-3" /> {t('common:button.edit')}
+          </button>
+          {task.status === 'queued' && !agent && (task.lastPhase ?? -1) <= -1 && (
+            <button onClick={onStart} className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-3 py-1.5 rounded-lg">
+              <IconPlay className="w-3 h-3" /> {t('button.start')}
+            </button>
+          )}
+          {task.status === 'queued' && !agent && (task.lastPhase ?? -1) > -1 && (
+            <button onClick={onStart} className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-3 py-1.5 rounded-lg flex items-center gap-1">
+              <IconPlay className="w-3 h-3" /> {t('button.resume')}
+            </button>
+          )}
+          {agent && (
+            <button onClick={onStop} className="text-xs bg-red-600 hover:bg-red-700 text-white font-medium px-3 py-1.5 rounded-lg flex items-center gap-1">
+              <IconStop className="w-3 h-3" /> {t('button.stop')}
+            </button>
+          )}
+          {task.status === 'spec_feedback' && (
+            <>
+              <button onClick={onRefineSpec} className="text-xs bg-cyan-600 hover:bg-cyan-700 text-white font-medium px-3 py-1.5 rounded-lg flex items-center gap-1">
+                <IconEdit className="w-3 h-3" /> {t('button.refineSpec')}
+              </button>
+              <button onClick={onContinueSpec} className="text-xs bg-gray-500 hover:bg-gray-600 text-white font-medium px-3 py-1.5 rounded-lg">
+                {t('button.continueAsIs')} &rarr;
+              </button>
+            </>
+          )}
+          {task.status === 'plan_review' && (
+            <>
+              <button onClick={onApprovePlan} className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-3 py-1.5 rounded-lg flex items-center gap-1">
+                <IconCircleCheck className="w-3 h-3" /> {t('button.approvePlan')}
+              </button>
+              <button onClick={onReplan} className="text-xs bg-gray-500 hover:bg-gray-600 text-white font-medium px-3 py-1.5 rounded-lg flex items-center gap-1">
+                <IconEdit className="w-3 h-3" /> {t('button.replan')}
+              </button>
+            </>
+          )}
+          {task.status === 'push_review' && (
+            <>
+              <button onClick={onApprovePush} className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-3 py-1.5 rounded-lg flex items-center gap-1">
+                <IconCircleCheck className="w-3 h-3" /> {t('button.approvePush', 'Approve Push')}
+              </button>
+              <button onClick={onRejectPush} className="text-xs bg-red-600 hover:bg-red-700 text-white font-medium px-3 py-1.5 rounded-lg flex items-center gap-1">
+                <IconX className="w-3 h-3" /> {t('button.rejectPush', 'Reject')}
+              </button>
+            </>
+          )}
+          {task.status === 'test_fixing' && (
+            <button onClick={onFixTests} className="text-xs bg-red-600 hover:bg-red-700 text-white font-medium px-3 py-1.5 rounded-lg flex items-center gap-1">
+              <IconRetry className="w-3 h-3" /> {t('button.fixTests')}
+            </button>
+          )}
+          {task.status === 'pr_feedback' && (
+            <>
+              <button onClick={onFetchAndFix} className="text-xs bg-orange-500 hover:bg-orange-600 text-white font-medium px-3 py-1.5 rounded-lg flex items-center gap-1">
+                <IconDownload className="w-3 h-3" /> {t('button.fetchAndFix')}
+              </button>
+              <button onClick={onApprove} className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-3 py-1.5 rounded-lg flex items-center gap-1">
+                <IconCircleCheck className="w-3 h-3" /> {t('button.approve')}
+              </button>
+            </>
+          )}
+          <div className="ml-auto flex items-center gap-2">
+            {task.status === 'failed' && (
+              <button onClick={onStart} className="text-xs bg-amber-600 hover:bg-amber-700 text-white font-medium px-3 py-1.5 rounded-lg flex items-center gap-1">
+                <IconRetry className="w-3 h-3" /> {t('button.retry')}
+              </button>
+            )}
+            {(task.status === 'queued' || task.status === 'failed') && (
+              <button onClick={onDelete} className="text-xs text-red-400 hover:text-red-600 font-medium px-3 py-1.5">
+                {t('common:button.delete')}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Progress if running */}
+        {(isRunning || agent) && (
+          <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-700">
+            <ProgressBar agent={agent} />
+          </div>
+        )}
+
+        {/* Spec Review Suggestions */}
+        {task.status === 'spec_feedback' && task.specSuggestions && task.specSuggestions.length > 0 && (
+          <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-700 bg-cyan-50/50 dark:bg-cyan-900/20">
+            <h4 className="text-xs font-semibold text-cyan-700 dark:text-cyan-400 uppercase tracking-wider mb-2 flex items-center gap-1"><IconRuler className="w-3.5 h-3.5" /> {t('detail.specSuggestionsTitle')}</h4>
+            <div className="space-y-2">
+              {task.specSuggestions.map((s, i) => (
+                <div key={i} className="flex items-start gap-2 bg-white dark:bg-gray-800 border border-cyan-200 dark:border-cyan-800 rounded-lg p-2.5">
+                  <span className="text-cyan-500 text-sm mt-0.5">-&gt;</span>
+                  <span className="text-sm text-cyan-800">{s}</span>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-cyan-600 mt-2">{t('detail.specSuggestionsHelp')}</p>
+          </div>
+        )}
+
+        {/* Plan Review Summary */}
+        {task.status === 'plan_review' && task.planSummary && (
+          <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-700 bg-sky-50/50 dark:bg-sky-900/20">
+            <h4 className="text-xs font-semibold text-sky-700 dark:text-sky-400 uppercase tracking-wider mb-2 flex items-center gap-1"><IconRuler className="w-3.5 h-3.5" /> {t('detail.planReviewTitle')}</h4>
+            <div className="bg-white dark:bg-gray-800 border border-sky-200 dark:border-sky-800 rounded-lg p-3 max-h-64 overflow-y-auto">
+              <pre className="text-sm text-sky-800 dark:text-sky-300 whitespace-pre-wrap font-mono">{task.planSummary}</pre>
+            </div>
+            <p className="text-xs text-sky-600 dark:text-sky-500 mt-2">{t('detail.planReviewHelp')}</p>
+          </div>
+        )}
+
+        {/* Push Review Summary */}
+        {task.status === 'push_review' && task.planSummary && (
+          <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-700 bg-amber-50/50 dark:bg-amber-900/20">
+            <h4 className="text-xs font-semibold text-amber-700 dark:text-amber-400 uppercase tracking-wider mb-2">Push Review</h4>
+            <div className="bg-white dark:bg-gray-800 border border-amber-200 dark:border-amber-800 rounded-lg p-3 max-h-64 overflow-y-auto">
+              <pre className="text-sm text-amber-800 dark:text-amber-300 whitespace-pre-wrap font-mono">{task.planSummary}</pre>
+            </div>
+            <div className="mt-3">
+              <textarea
+                className="w-full p-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-400"
+                placeholder={t('detail.revisionPromptPlaceholder', 'Describe improvements needed...')}
+                rows={3}
+                value={revisionPrompt}
+                onChange={(e) => setRevisionPrompt(e.target.value)}
+              />
+              <button
+                onClick={() => { onRevisePush(revisionPrompt); setRevisionPrompt(''); }}
+                disabled={!revisionPrompt.trim()}
+                className="mt-2 text-xs bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-medium px-3 py-1.5 rounded-lg"
+              >
+                {t('button.requestRevision', 'Request Revision')}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Skills */}
+        <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-700">
+          <button onClick={() => toggle('skills')} className="flex items-center gap-1 w-full text-left">
+            <IconChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform ${collapsed.skills ? '-rotate-90' : ''}`} />
+            <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('detail.projectSkills')}</h4>
+          </button>
+          {!collapsed.skills && (
+            <div className="flex flex-wrap gap-1 mt-2">
+              {CORE_SKILLS.map((s) => <SkillTag key={s.id} id={s.id} locked size="xs" />)}
+              {project?.optionalSkills?.map((s) => <SkillTag key={s} id={s} size="xs" />)}
+            </div>
+          )}
+        </div>
+
+        {/* Spec */}
+        <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-700">
+          <button onClick={() => toggle('spec')} className="flex items-center gap-1 w-full text-left">
+            <IconChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform ${collapsed.spec ? '-rotate-90' : ''}`} />
+            <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('detail.specTitle')}</h4>
+          </button>
+          {!collapsed.spec && (
+            <div className="mt-2">
+              {task.description ? (
+                <p className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap font-mono bg-gray-50 dark:bg-gray-900 rounded-lg p-3">{task.description}</p>
+              ) : (
+                <p className="text-xs text-gray-300 dark:text-gray-600 italic">{t('detail.noDescription')}</p>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Acceptance Criteria */}
+        <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-700">
+          {(() => {
+            const statusMap = new Map<number, CriterionStatus>();
+            (task.criteriaStatus || []).forEach((s) => statusMap.set(s.index, s));
+            const metCount = Array.from(statusMap.values()).filter((s) => s.met).length;
+            const hasStatus = statusMap.size > 0;
+            return (
+              <>
+                <button onClick={() => toggle('criteria')} className="flex items-center gap-1 w-full text-left">
+                  <IconChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform ${collapsed.criteria ? '-rotate-90' : ''}`} />
+                  <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider flex items-center gap-2">
+                    {t('detail.acceptanceCriteria')}
+                    {hasStatus && task.acceptanceCriteria?.length > 0 && (
+                      <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
+                        metCount === task.acceptanceCriteria.length
+                          ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400'
+                          : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400'
+                      }`}>
+                        ({metCount}/{task.acceptanceCriteria.length} met)
+                      </span>
+                    )}
+                  </h4>
+                </button>
+                {!collapsed.criteria && (task.acceptanceCriteria?.length > 0 ? (
+                  <div className="space-y-1.5 mt-2">
+                    {task.acceptanceCriteria.map((c, i) => {
+                      const status = statusMap.get(i + 1);
+                      const isCompleted = task.status === 'completed';
+                      let iconClass: string;
+                      let icon: string;
+                      if (status) {
+                        iconClass = status.met
+                          ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400'
+                          : 'bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400';
+                        icon = status.met ? '✓' : '✗';
+                      } else if (isCompleted) {
+                        iconClass = 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400';
+                        icon = '✓';
+                      } else {
+                        iconClass = 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500';
+                        icon = String(i + 1);
+                      }
+                      return (
+                        <div key={i}>
+                          <div className="flex items-start gap-2">
+                            <span className={`w-5 h-5 rounded flex items-center justify-center text-xs flex-shrink-0 mt-0.5 ${iconClass}`}>
+                              {icon}
+                            </span>
+                            <span className="text-sm text-gray-700 dark:text-gray-300">{c}</span>
+                          </div>
+                          {status?.note && (
+                            <p className={`ml-7 mt-0.5 text-xs ${status.met ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-500 dark:text-red-400'}`}>
+                              {status.note}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-xs text-gray-300 dark:text-gray-600 italic mt-2">{t('detail.noCriteria')}</p>
+                ))}
+              </>
+            );
+          })()}
+        </div>
+
+        {/* Images */}
+        {task.images?.length > 0 && (
+          <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-700">
+            <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">{t('detail.referenceImages')}</h4>
+            <div className="flex gap-2 flex-wrap">
+              {task.images.map((img, i) => (
+                <div key={i} className="bg-gray-100 dark:bg-gray-700 rounded-lg p-1.5 group relative">
+                  <img
+                    src={img.url}
+                    alt=""
+                    className="w-24 h-16 object-cover rounded cursor-pointer"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).style.display = 'none';
+                      (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden');
+                    }}
+                  />
+                  <div className="hidden w-24 h-16 bg-gray-200 dark:bg-gray-600 rounded flex items-center justify-center text-gray-400">
+                    <IconImage className="w-5 h-5" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Activity log for this task */}
+        {taskLogs.length > 0 && (
+          <div className="px-6 py-4">
+            <button onClick={() => toggle('activity')} className="flex items-center gap-1 w-full text-left">
+              <IconChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform ${collapsed.activity ? '-rotate-90' : ''}`} />
+              <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{t('detail.activity')}</h4>
+            </button>
+            {!collapsed.activity && (
+              <>
+                <div
+                  onMouseDown={onDragStart}
+                  className="flex items-center justify-center cursor-row-resize group py-1 mb-1"
+                >
+                  <div className="w-10 h-1 rounded-full bg-gray-700 group-hover:bg-gray-500 transition-colors" />
+                </div>
+                <div className="bg-gray-950 rounded-lg p-3 overflow-y-auto font-mono text-xs space-y-1" style={{ height: activityHeight }}>
+                  {taskLogs.map((l) => (
+                    <div key={l.id} className="flex gap-3 text-gray-400">
+                      <span className="text-gray-600 flex-shrink-0">
+                        {formatTime(l.createdAt)}
+                      </span>
+                      <span className={l.kind === 'ok' ? 'text-emerald-400' : l.kind === 'error' ? 'text-red-400' : 'text-gray-300'}>
+                        {l.message}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

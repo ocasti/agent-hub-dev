@@ -1,0 +1,19 @@
+{
+  "about": "About {{name}}",
+  "hide": "Hide {{name}}",
+  "quit": "Quit {{name}}",
+  "edit": "Edit",
+  "file": "File",
+  "newProject": "New Project",
+  "newTask": "New Task",
+  "navigate": "Navigate",
+  "dashboard": "Dashboard",
+  "tasks": "Tasks",
+  "projects": "Projects",
+  "workflow": "Workflow",
+  "skills": "Skills",
+  "knowledge": "Knowledge",
+  "logs": "Logs",
+  "settings": "Settings",
+  "help": "Help"
+}

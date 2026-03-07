@@ -1,0 +1,23 @@
+{
+  "header.title": "Knowledge Base",
+  "header.subtitle": "Patrones aprendidos de code reviews para inyectar en futuras tareas.",
+  "button.manual": "+ Manual",
+  "filter.allCategories": "Todas las categorias",
+  "filter.allProjects": "Todos los proyectos",
+  "empty.title": "Sin entradas de knowledge",
+  "empty.subtitle": "Los patrones se registran automaticamente desde code reviews.",
+  "form.title": "Nuevo patron de knowledge",
+  "form.labelCategory": "Categoria",
+  "form.labelSeverity": "Severidad",
+  "form.labelProject": "Proyecto (opcional)",
+  "form.projectGlobal": "Global",
+  "form.labelTitle": "Titulo",
+  "form.labelDescription": "Descripcion",
+  "form.labelExample": "Ejemplo correcto",
+  "form.labelAntiPattern": "Anti-patron",
+  "detail.antiPattern": "Anti-patron",
+  "detail.correct": "Correcto",
+  "stats": "{{total}} patrones · {{applied}} aplicaciones · {{autoFixable}} auto-fixable",
+  "confirm.deleteTitle": "Eliminar knowledge entry",
+  "confirm.deleteMessage": "Se eliminara \"{{title}}\". Esta accion no se puede deshacer."
+}

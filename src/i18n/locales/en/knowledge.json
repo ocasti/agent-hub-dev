@@ -1,0 +1,23 @@
+{
+  "header.title": "Knowledge Base",
+  "header.subtitle": "Patterns learned from code reviews to inject into future tasks.",
+  "button.manual": "+ Manual",
+  "filter.allCategories": "All categories",
+  "filter.allProjects": "All projects",
+  "empty.title": "No knowledge entries",
+  "empty.subtitle": "Patterns are automatically registered from code reviews.",
+  "form.title": "New knowledge pattern",
+  "form.labelCategory": "Category",
+  "form.labelSeverity": "Severity",
+  "form.labelProject": "Project (optional)",
+  "form.projectGlobal": "Global",
+  "form.labelTitle": "Title",
+  "form.labelDescription": "Description",
+  "form.labelExample": "Correct example",
+  "form.labelAntiPattern": "Anti-pattern",
+  "detail.antiPattern": "Anti-pattern",
+  "detail.correct": "Correct",
+  "stats": "{{total}} patterns · {{applied}} applications · {{autoFixable}} auto-fixable",
+  "confirm.deleteTitle": "Delete knowledge entry",
+  "confirm.deleteMessage": "\"{{title}}\" will be deleted. This action cannot be undone."
+}

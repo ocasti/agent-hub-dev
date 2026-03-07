@@ -1,0 +1,25 @@
+{
+  "id": "github",
+  "name": "GitHub",
+  "version": "1.0.0",
+  "author": "Agent Hub",
+  "description": "Git operations, pull requests, and code review via GitHub CLI",
+  "homepage": "https://cli.github.com",
+  "license": "MIT",
+  "capabilities": ["ship", "pr_feedback"],
+  "level": 2,
+  "requires": {
+    "agentHub": ">=1.0.0",
+    "cli": "gh"
+  },
+  "configSchema": [
+    {
+      "key": "defaultBranch",
+      "label": "Default Branch",
+      "type": "text",
+      "required": false,
+      "default": "main",
+      "description": "The default branch for pull request targets (e.g. main, master, develop)"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "header.title": "Dashboard",
+  "header.subtitle": "Overview of task status, active agents, and recent activity.",
+  "counter.activeAgents": "Active Agents",
+  "counter.needAction": "Need Action",
+  "counter.queued": "Queued",
+  "counter.completed": "Completed",
+  "counter.projects": "Projects",
+  "agents.status": "{{running}}/{{max}} agents",
+  "section.running": "Tasks running ({{count}})",
+  "section.specRefine": "Spec needs refinement ({{count}})",
+  "section.planApproval": "Plan ready for approval ({{count}})",
+  "section.prReview": "Awaiting PR Review ({{count}})"
+}

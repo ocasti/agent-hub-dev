@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="100" y1="100" x2="924" y2="924" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#4F46E5"/>
+      <stop offset="100%" stop-color="#7C3AED"/>
+    </linearGradient>
+  </defs>
+
+  <!-- macOS HIG: icon body 824x824 centered in 1024, ~10% margin, radius ~22.4% -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+
+  <!-- Subtle inner border -->
+  <rect x="104" y="104" width="816" height="816" rx="181" fill="none" stroke="white" stroke-opacity="0.12" stroke-width="3"/>
+
+  <!-- AH text - y=634 = center(512) + capHeight(245)/2 for baseline alignment -->
+  <text x="512" y="634" text-anchor="middle" fill="white" font-size="340" font-weight="800" font-family="system-ui, -apple-system, sans-serif" letter-spacing="-10">AH</text>
+</svg>

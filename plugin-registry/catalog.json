@@ -1,0 +1,29 @@
+[
+  {
+    "id": "github",
+    "name": "GitHub",
+    "version": "1.0.0",
+    "description": "Git operations, pull requests, and code review via GitHub CLI",
+    "author": "Agent Hub",
+    "capabilities": [
+      "ship",
+      "pr_feedback"
+    ],
+    "level": 2,
+    "source": "official",
+    "downloadUrl": "https://github.com/ocasti/agent-hub-dev/releases/latest/download/github.tar.gz",
+    "homepage": "https://cli.github.com",
+    "license": "MIT",
+    "updatedAt": "2026-03-07T22:36:37.452Z",
+    "configSchema": [
+      {
+        "key": "defaultBranch",
+        "label": "Default Branch",
+        "type": "text",
+        "required": false,
+        "default": "main",
+        "description": "The default branch for pull request targets (e.g. main, master, develop)"
+      }
+    ]
+  }
+]

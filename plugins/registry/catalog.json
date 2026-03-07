@@ -1,0 +1,14 @@
+[
+  {
+    "id": "github",
+    "name": "GitHub",
+    "version": "1.0.0",
+    "description": "Code hosting integration for GitHub. Adds Ship and PR Feedback phases to the SDD workflow.",
+    "author": "Agent Hub",
+    "capabilities": ["ship", "pr_feedback"],
+    "level": 2,
+    "source": "official",
+    "icon": "github",
+    "tags": ["code-hosting", "git", "pull-requests"]
+  }
+]

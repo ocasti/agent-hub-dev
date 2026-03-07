@@ -1,0 +1,6 @@
+{
+  "header.title": "Logs",
+  "header.subtitle": "Agent activity and task changes history.",
+  "filter.allProjects": "All projects",
+  "empty": "No activity"
+}

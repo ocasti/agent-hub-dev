@@ -1,0 +1,52 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-electron/
+release/
+out/
+
+# Database files
+*.db
+*.sqlite
+
+# Build caches
+*.tsbuildinfo
+.cache/
+.eslintcache
+
+# IDE & Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Claude Code local data (machine-specific)
+.claude/
+
+# User images stored by the app
+images/
+
+# Environment variables
+.env
+.env.local
+.env.production
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+
+# Electron packaging artifacts
+*.dmg
+*.AppImage
+*.deb
+*.snap
+*.exe
+*.msi

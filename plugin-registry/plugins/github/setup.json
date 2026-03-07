@@ -1,0 +1,15 @@
+{
+  "steps": [
+    {
+      "type": "cli_check",
+      "description": "Checking GitHub CLI is installed...",
+      "command": "gh --version"
+    },
+    {
+      "type": "cli_check",
+      "description": "Checking GitHub CLI authentication...",
+      "command": "gh auth status"
+    }
+  ],
+  "uninstall": []
+}
