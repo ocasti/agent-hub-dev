@@ -1,7 +1,10 @@
 import type { IpcMain } from 'electron';
+import { existsSync } from 'fs';
+import { join } from 'path';
+import { app } from 'electron';
 import type Database from 'better-sqlite3';
 import { loadAllPlugins, getRegistryCatalog } from './loader';
-import { installPlugin, uninstallPlugin, updatePluginConfig, downloadAndInstallPlugin, checkPluginCompatibility } from './installer';
+import { installPlugin, uninstallPlugin, updatePluginConfig, downloadAndInstallPlugin, installBundledPlugin, checkPluginCompatibility } from './installer';
 import { checkCapabilityConflicts, executeOperation } from './engine';
 import type { InstalledPlugin, CatalogPlugin } from './types';
 import { canInstallCommunityPlugin } from '../license';
@@ -144,7 +147,14 @@ export function registerPluginHandlers(ipcMain: IpcMain, db: Database.Database) 
     if (entry.source === 'community' && !canInstallCommunityPlugin(db)) {
       throw new Error('COMMUNITY_PLUGIN_REQUIRES_PRO');
     }
-    await downloadAndInstallPlugin(entry, config);
+
+    // Try bundled install first (for official plugins shipped with the app)
+    const bundledDir = join(app.getAppPath(), 'plugin-registry', 'plugins', entry.id);
+    if (existsSync(bundledDir)) {
+      await installBundledPlugin(entry.id, config);
+    } else {
+      await downloadAndInstallPlugin(entry, config);
+    }
   });
 
   // Check compatibility of all installed plugins

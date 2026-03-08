@@ -11,10 +11,17 @@
     ],
     "level": 2,
     "source": "official",
+    "icon": "github",
+    "tags": [
+      "code-hosting",
+      "git",
+      "pull-requests"
+    ],
+    "category": "Code Hosting",
     "downloadUrl": "https://github.com/ocasti/agent-hub-dev/releases/latest/download/github.tar.gz",
     "homepage": "https://cli.github.com",
     "license": "MIT",
-    "updatedAt": "2026-03-07T22:36:37.452Z",
+    "updatedAt": "2026-03-08T00:38:53.407Z",
     "configSchema": [
       {
         "key": "defaultBranch",

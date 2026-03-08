@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync, rmSync, createWriteStream, readFileSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync, rmSync, createWriteStream, readFileSync, cpSync } from 'fs';
 import { join, normalize } from 'path';
 import { tmpdir } from 'os';
 import { createHash } from 'crypto';
@@ -249,6 +249,72 @@ function execCommand(command: string): Promise<string> {
       else resolve(stdout);
     });
   });
+}
+
+// ── Bundled Plugin Install ───────────────────────────────────────────────────────
+
+export async function installBundledPlugin(
+  pluginId: string,
+  config: Record<string, string>
+): Promise<void> {
+  const bundledDir = join(app.getAppPath(), 'plugin-registry', 'plugins', pluginId);
+  if (!existsSync(bundledDir)) {
+    throw new Error(`Bundled plugin "${pluginId}" not found`);
+  }
+
+  const pluginDir = join(app.getPath('home'), '.config', 'agent-hub', 'plugins', pluginId);
+
+  // If already installed, uninstall first
+  const installed = getInstalledPlugins();
+  const existing = installed.find((p) => p.id === pluginId);
+  if (existing) {
+    await uninstallPlugin(pluginId);
+  }
+
+  // Copy bundled plugin files to user plugins dir
+  mkdirSync(pluginDir, { recursive: true });
+  cpSync(bundledDir, pluginDir, { recursive: true });
+
+  // Load manifest and workflow
+  const manifest = loadPluginManifest(pluginDir);
+  const workflow = loadPluginWorkflow(pluginDir);
+
+  // Check compatibility
+  if (manifest) {
+    const compat = checkPluginCompatibility(manifest);
+    if (!compat.compatible) {
+      rmSync(pluginDir, { recursive: true, force: true });
+      throw new Error(`Plugin incompatible: ${compat.reason}`);
+    }
+  }
+
+  // Register in installed.json
+  const entry: InstalledPlugin = {
+    id: pluginId,
+    version: manifest?.version || '1.0.0',
+    enabled: true,
+    config,
+    source: 'official',
+    installedAt: new Date().toISOString(),
+    pluginDir,
+    manifest: manifest || undefined,
+    workflow: workflow || undefined,
+  };
+
+  const currentInstalled = getInstalledPlugins();
+  currentInstalled.push(entry);
+  saveInstalledPlugins(currentInstalled);
+
+  // Execute setup.json if present
+  const setupPath = join(pluginDir, 'setup.json');
+  if (existsSync(setupPath)) {
+    try {
+      const setup = JSON.parse(readFileSync(setupPath, 'utf-8')) as PluginSetup;
+      await executeMcpSetup(setup);
+    } catch (err) {
+      console.error(`[plugins] Setup execution failed for ${pluginId}:`, err);
+    }
+  }
 }
 
 // ── Download helpers (A3: hardened) ──────────────────────────────────────────────

@@ -8,6 +8,9 @@
   "license": "MIT",
   "capabilities": ["ship", "pr_feedback"],
   "level": 2,
+  "category": "Code Hosting",
+  "icon": "github",
+  "tags": ["code-hosting", "git", "pull-requests"],
   "requires": {
     "agentHub": ">=1.0.0",
     "cli": "gh"

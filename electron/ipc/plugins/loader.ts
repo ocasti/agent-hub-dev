@@ -117,7 +117,7 @@ function validateCatalogEntry(entry: unknown): CatalogPlugin | null {
 // ── Registry Catalog ─────────────────────────────────────────────────────────────
 
 const DEFAULT_REGISTRY_URL = process.env.PLUGIN_REGISTRY_URL
-  || 'https://raw.githubusercontent.com/agenthub-dev/plugin-registry/main/catalog.json';
+  || 'https://raw.githubusercontent.com/ocasti/agent-hub-dev/main/plugin-registry/catalog.json';
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 
 function getCachePath(): string {
@@ -196,30 +196,64 @@ function fetchRemoteCatalog(url: string): Promise<CatalogPlugin[]> {
   });
 }
 
+function readBundledCatalog(): CatalogPlugin[] {
+  try {
+    const bundledPath = join(app.getAppPath(), 'plugins', 'registry', 'catalog.json');
+    if (existsSync(bundledPath)) {
+      const raw = JSON.parse(readFileSync(bundledPath, 'utf-8'));
+      if (Array.isArray(raw)) {
+        return raw
+          .map(validateCatalogEntry)
+          .filter((e): e is CatalogPlugin => e !== null);
+      }
+    }
+  } catch { /* ignore */ }
+  return [];
+}
+
+function mergeCatalogs(primary: CatalogPlugin[], secondary: CatalogPlugin[]): CatalogPlugin[] {
+  const ids = new Set(primary.map((p) => p.id));
+  const merged = [...primary];
+  for (const entry of secondary) {
+    if (!ids.has(entry.id)) {
+      merged.push(entry);
+    }
+  }
+  return merged;
+}
+
 export async function getRegistryCatalog(
   registryUrl?: string,
   forceRefresh = false
 ): Promise<CatalogPlugin[]> {
   const url = registryUrl || DEFAULT_REGISTRY_URL;
+  const bundled = readBundledCatalog();
 
   if (!forceRefresh && isCacheValid()) {
-    return readCachedCatalog();
+    const cached = readCachedCatalog();
+    if (cached.length > 0) return mergeCatalogs(cached, bundled);
   }
 
   try {
     const catalog = await fetchRemoteCatalog(url);
-    writeCatalogCache(catalog);
-    return catalog;
+    if (catalog.length > 0) {
+      writeCatalogCache(catalog);
+      return mergeCatalogs(catalog, bundled);
+    }
   } catch (err) {
     console.error('[plugins] Failed to fetch remote catalog:', err);
-    // Fallback to cached version (even if expired)
     const cached = readCachedCatalog();
     if (cached.length > 0) {
       console.log('[plugins] Using expired cache as fallback');
-      return cached;
+      return mergeCatalogs(cached, bundled);
     }
-    return [];
   }
+
+  // Bundled catalog is the last resort (always available offline)
+  if (bundled.length > 0) {
+    console.log('[plugins] Using bundled catalog');
+  }
+  return bundled;
 }
 
 // ── Load All ────────────────────────────────────────────────────────────────────
