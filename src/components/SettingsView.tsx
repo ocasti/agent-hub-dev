@@ -121,13 +121,13 @@ export default function SettingsView({ settings, onUpdate, licensePlan = 'free',
           </label>
           <button
             onClick={() => onUpdate('update_auto_check', settings.updateAutoCheck ? 'false' : 'true')}
-            className={`relative w-9 h-5 rounded-full transition-colors ${
+            className={`relative inline-flex items-center w-11 h-6 rounded-full transition-colors ${
               settings.updateAutoCheck ? 'bg-indigo-600' : 'bg-gray-300 dark:bg-gray-600'
             }`}
           >
             <span
-              className={`absolute top-0.5 w-4 h-4 bg-white rounded-full transition-transform shadow ${
-                settings.updateAutoCheck ? 'translate-x-4' : 'translate-x-0.5'
+              className={`inline-block w-4 h-4 bg-white rounded-full transition-transform shadow ${
+                settings.updateAutoCheck ? 'translate-x-6' : 'translate-x-1'
               }`}
             />
           </button>

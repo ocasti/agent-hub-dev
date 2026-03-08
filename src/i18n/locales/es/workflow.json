@@ -125,5 +125,13 @@
   "workflowPhase.pr_waiting": "Esperando review humano",
   "workflowPhase.pr_fetch": "gh pr view --comments",
   "workflowPhase.pr_fix": "Corrigiendo PR feedback",
-  "workflowPhase.pr_repush": "Re-push + Review"
+  "workflowPhase.pr_repush": "Re-push + Review",
+  "hooks.label": "Hooks:",
+  "hooks.lifecycle": "on:workflow_started → on:task_complete | on:workflow_failed | on:workflow_aborted",
+  "hooks.phase0": "on:before_spec → on:spec_needs_input | on:spec_complete",
+  "hooks.phase1": "on:plan_ready → on:plan_approved",
+  "hooks.phase2": "on:implement_complete",
+  "hooks.phase3": "on:review_started → on:quality_fail | on:quality_pass → on:core_complete",
+  "hooks.phase4": "on:ship_started → on:ship_failed | on:pr_created",
+  "hooks.phase5": "on:pr_changes_requested → on:pr_fix_pushed | on:pr_approved → on:task_complete"
 }

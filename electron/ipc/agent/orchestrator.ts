@@ -25,9 +25,17 @@ export async function orchestrateSddWorkflow(
   const controller = new AbortController();
   activeControllers.set(taskId, controller);
 
+  // Declared outside try so catch block can access for hook context
+  let taskProjectId: string | undefined;
+  let taskProjectPath: string | undefined;
+  let taskTitle: string | undefined;
+
   try {
     const task = q.getTask.get(taskId) as TaskRow | undefined;
     if (!task) throw new Error(`Task ${taskId} not found`);
+    taskProjectId = task.project_id;
+    taskProjectPath = task.project_path;
+    taskTitle = task.title;
 
     const projectPath = task.project_path;
     const projectName = task.project_name;
@@ -54,6 +62,8 @@ export async function orchestrateSddWorkflow(
       branchName: task.branch_name || undefined,
       prNumber: task.pr_number || undefined,
     };
+
+    await fireHook('on:workflow_started', { ...hookCtx, phase: startPhase }, db);
 
     // ── SDD: check speckit commands availability (global ~/.claude/commands/) ──
     const home = process.env.HOME || '';
@@ -146,6 +156,7 @@ export async function orchestrateSddWorkflow(
           specSuggestions: suggestions,
         });
         sendLog(q, getWindow, taskId, projectName, `Spec incomplete — ${suggestions.length} suggestion(s). Waiting for user input.`, 'info');
+        await fireHook('on:spec_needs_input', { ...hookCtx, phase: 0, phaseLabel: 'spec_feedback', specSuggestions: suggestions }, db);
 
         // Wait for user to continue
         const userResponse = await waitForSpecContinue(taskId, controller);
@@ -220,6 +231,7 @@ export async function orchestrateSddWorkflow(
         planSummary,
       });
       sendLog(q, getWindow, taskId, projectName, 'Plan ready — waiting for user approval before implementing.', 'info');
+      await fireHook('on:plan_ready', { ...hookCtx, phase: 1, phaseLabel: 'plan_review', planSummary }, db);
 
       // Wait for user to approve or request re-plan
       const planResponse = await waitForPlanContinue(taskId, controller);
@@ -288,6 +300,7 @@ export async function orchestrateSddWorkflow(
         q.updateTaskStatus.run('reviewing', taskId);
         sendPhaseUpdate(getWindow, { taskId, phase: 3, phaseLabel: 'reviewing', status: 'started', reviewLoop });
         sendLog(q, getWindow, taskId, projectName, `── Phase 3: Quality Gate (loop ${reviewLoop + 1}/${maxReviewLoops}) ──`, 'info');
+        await fireHook('on:review_started', { ...hookCtx, phase: 3, phaseLabel: 'reviewing', reviewLoop }, db);
 
         const prompt = buildPhasePrompt(3, task, projectDescription, knowledge, criteria, reviewLoop, useSpeckit);
         const { output, exitCode } = await runClaudePhase(projectPath, model, prompt, taskId, q, getWindow, controller, 900000);
@@ -315,6 +328,7 @@ export async function orchestrateSddWorkflow(
           sendPhaseUpdate(getWindow, { taskId, phase: 3, phaseLabel: 'reviewing', status: 'completed', reviewLoop });
           sendLog(q, getWindow, taskId, projectName, 'Quality Gate PASSED', 'ok');
         } else {
+          await fireHook('on:quality_fail', { ...hookCtx, phase: 3, phaseLabel: 'reviewing', reviewLoop, extra: { issues: parsed.issues } }, db);
           reviewLoop++;
           if (reviewLoop < maxReviewLoops) {
             // Run fix phase
@@ -335,6 +349,7 @@ export async function orchestrateSddWorkflow(
             sendPhaseUpdate(getWindow, { taskId, phase: 3, phaseLabel: 'fixing', status: 'completed', reviewLoop });
           } else {
             sendLog(q, getWindow, taskId, projectName, `Max review loops reached (${reviewLoop}/${maxReviewLoops}). Proceeding to Ship.`, 'info');
+            await fireHook('on:quality_max_loops', { ...hookCtx, phase: 3, phaseLabel: 'reviewing', reviewLoop }, db);
             sendPhaseUpdate(getWindow, { taskId, phase: 3, phaseLabel: 'reviewing', status: 'completed', reviewLoop });
           }
         }
@@ -365,11 +380,13 @@ export async function orchestrateSddWorkflow(
       q.updateTaskStatus.run('shipping', taskId);
       sendPhaseUpdate(getWindow, { taskId, phase: 4, phaseLabel: 'shipping', status: 'started' });
       sendLog(q, getWindow, taskId, projectName, '── Phase 4: Ship ──', 'info');
+      await fireHook('on:ship_started', { ...hookCtx, phase: 4, phaseLabel: 'shipping' }, db);
 
       const prompt = buildPhasePrompt(4, task, projectDescription, knowledge, criteria, undefined, useSpeckit);
       const { output, exitCode } = await runClaudePhase(projectPath, model, prompt, taskId, q, getWindow, controller, 600000);
 
       if (exitCode !== 0) {
+        await fireHook('on:ship_failed', { ...hookCtx, phase: 4, phaseLabel: 'shipping', error: 'Ship phase failed' }, db);
         q.updateTaskStatus.run('failed', taskId);
         sendPhaseUpdate(getWindow, { taskId, phase: 4, phaseLabel: 'shipping', status: 'failed' });
         return;
@@ -398,6 +415,7 @@ export async function orchestrateSddWorkflow(
         `Ship complete. PR #${parsed.prNumber || '?'} on branch ${parsed.branchName || '?'}. Waiting for human review.`,
         'ok'
       );
+      await fireHook('on:pr_created', { ...hookCtx, phase: 4, phaseLabel: 'shipping', prNumber: parsed.prNumber || undefined, branchName: parsed.branchName || undefined }, db);
     }
 
     activeControllers.delete(taskId);
@@ -410,17 +428,20 @@ export async function orchestrateSddWorkflow(
       q.updateTaskStatus.run('completed', taskId);
       sendPhaseUpdate(getWindow, { taskId, phase: 3, phaseLabel: 'completed', status: 'completed' });
       sendLog(q, getWindow, taskId, projectName, 'SDD Workflow completed (no code-hosting plugin — git/PR handled manually).', 'ok');
+      await fireHook('on:task_complete', { ...hookCtx, phase: 3 }, db);
     }
 
   } catch (err) {
     activeControllers.delete(taskId);
     if ((err as Error).name === 'AbortError') {
       sendLog(q, getWindow, taskId, '', 'Workflow aborted', 'info');
+      fireHook('on:workflow_aborted', { taskId, projectId: taskProjectId, projectPath: taskProjectPath, taskTitle }, db).catch(() => {});
       return;
     }
     q.updateTaskStatus.run('failed', taskId);
     sendLog(q, getWindow, taskId, '', `Workflow failed: ${(err as Error).message}`, 'error');
     sendPhaseUpdate(getWindow, { taskId, phase: -1, phaseLabel: 'failed', status: 'failed' });
+    fireHook('on:workflow_failed', { taskId, projectId: taskProjectId, projectPath: taskProjectPath, taskTitle, error: (err as Error).message }, db).catch(() => {});
   }
 }
 

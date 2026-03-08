@@ -114,38 +114,74 @@ The workflow has two layers: **core phases** (always present) and **plugin phase
 
 ```
 Phase 0 — Spec Review
-  hook: on:before_spec (PM plugin can inject requirement data)
+  hooks: on:before_spec → on:spec_needs_input | on:spec_complete
   The agent analyzes the spec. If incomplete → pauses with suggestions.
-  hook: on:spec_complete
 
 Phase 1 — Plan
+  hooks: on:plan_ready → on:plan_approved
   Decompose into subtasks, identify risks, present plan.
-  hook: on:plan_approved (PM plugin can create dev_tasks)
 
 Phase 2 — Implement (TDD)
+  hooks: on:implement_complete
   Code + tests. Red → Green → Refactor. Incremental.
-  hook: on:implement_complete (PM plugin can mark subtasks done)
 
 Phase 3 — Quality Gate — Automatic loop
+  hooks: on:review_started → on:quality_fail | on:quality_pass → on:quality_max_loops → on:core_complete
   Tests pass → IA Review → Fix if issues → Re-check.
-  hook: on:quality_pass / on:quality_fail
-  hook: on:core_complete
 ```
 
 ### Plugin Phases (optional, from code-hosting plugin)
 
 ```
 Phase 4 — Ship (capability: "ship")
+  hooks: on:ship_started → on:ship_failed | on:pr_created
   Conventional commit + push + PR/MR.
-  hook: on:pr_created (PM → status "In Review", Notify → message)
 
 Phase 5 — PR Feedback (capability: "pr_feedback")
-  Waits for human review.
-  User clicks "Fetch & Fix" or "Approve".
-  hook: on:task_complete (PM → status "Done", Notify → message)
+  hooks: on:pr_changes_requested → on:pr_fix_pushed | on:pr_approved → on:task_complete
+  Waits for human review. User clicks "Fetch & Fix" or "Approve".
 ```
 
 Without a code-hosting plugin, the workflow ends at Phase 3. The user handles git/PR manually.
+
+### Workflow Hooks (25 total)
+
+All hooks are fired via `fireHook()` from the plugin engine. Plugins subscribe to hooks in their `manifest.json`.
+
+**Lifecycle (4):**
+- `on:workflow_started` — fired when the SDD workflow begins (with startPhase)
+- `on:task_complete` — fired when a task completes successfully (Phase 3 without code-hosting, or PR approved)
+- `on:workflow_failed` — fired on unrecoverable error (with error message)
+- `on:workflow_aborted` — fired when user stops the agent
+
+**Phase 0 — Spec Review (3):**
+- `on:before_spec` — before spec analysis (enrichment: PM plugin injects requirement data)
+- `on:spec_needs_input` — spec incomplete, pausing for user input (with suggestions)
+- `on:spec_complete` — spec analysis passed
+
+**Phase 1 — Plan (2):**
+- `on:plan_ready` — plan generated, awaiting user approval (with planSummary)
+- `on:plan_approved` — user approved the plan (PM plugin can create dev_tasks)
+
+**Phase 2 — Implement (1):**
+- `on:implement_complete` — implementation phase finished (PM plugin can mark subtasks done)
+
+**Phase 3 — Quality Gate (5):**
+- `on:review_started` — quality review loop iteration started (with reviewLoop)
+- `on:quality_fail` — review found issues (with issues detail)
+- `on:quality_pass` — review passed
+- `on:quality_max_loops` — max review iterations reached without pass
+- `on:core_complete` — all core phases finished
+
+**Phase 4 — Ship (3):**
+- `on:ship_started` — ship phase beginning
+- `on:ship_failed` — ship phase failed (with error)
+- `on:pr_created` — PR/MR created (with prNumber, branchName)
+
+**Phase 5 — PR Feedback (3):**
+- `on:pr_changes_requested` — reviewer left comments (with commentCount)
+- `on:pr_fix_pushed` — fixes pushed after review cycle (with reviewLoop)
+- `on:pr_approved` — user approved the push (with prNumber)
 
 ## Skills — Two Levels
 

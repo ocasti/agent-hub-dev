@@ -13,6 +13,7 @@ import { runRepoAnalysis } from './repo-analysis';
 import { orchestrateSddWorkflow } from './orchestrator';
 import { runFetchAndFix, runFetchAndFixPushOnly } from './pr-feedback';
 import { runTestFixLoop } from './test-runner';
+import { fireHook } from '../plugins/engine';
 
 // ── Registration ───────────────────────────────────────────────────────────────
 
@@ -82,6 +83,16 @@ export function registerAgentHandlers(
     activeControllers.delete(taskId);
     const task = q.getTask.get(taskId) as TaskRow | undefined;
     const prevStatus = task?.status || 'queued';
+
+    // Fire workflow_aborted hook (backup — orchestrator catch also fires this during execution)
+    if (task) {
+      fireHook('on:workflow_aborted', {
+        taskId,
+        projectId: task.project_id,
+        projectPath: task.project_path,
+        taskTitle: task.title,
+      }, db).catch(() => {});
+    }
     // Save current phase so we can resume from it
     const statusToPhase: Record<string, number> = {
       spec_review: 0, planning: 1, plan_review: 2,

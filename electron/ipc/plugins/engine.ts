@@ -213,6 +213,9 @@ function buildVarsFromContext(
     prNumber: context.prNumber?.toString() || '',
     phase: context.phase?.toString() || '',
     phaseLabel: context.phaseLabel || '',
+    error: context.error || '',
+    planSummary: context.planSummary || '',
+    commentCount: context.commentCount?.toString() || '',
   };
 }
 

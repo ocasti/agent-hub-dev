@@ -113,6 +113,16 @@ function PhaseTooltip({ idx, extra }: { idx: number; extra?: ReactNode }) {
   );
 }
 
+function HookBadge({ hookKey }: { hookKey: string }) {
+  const { t } = useTranslation('workflow');
+  return (
+    <div className="text-[9px] font-mono bg-gray-100 dark:bg-gray-800 text-gray-500 rounded px-1 py-0.5 mt-0.5 max-w-[320px] text-center leading-relaxed">
+      <span className="text-gray-400 dark:text-gray-500">{t('hooks.label')}</span>{' '}
+      {t(hookKey)}
+    </div>
+  );
+}
+
 // ── WorkflowDiagram ──────────────────────────────────────────────
 
 function WorkflowDiagram() {
@@ -158,6 +168,7 @@ function WorkflowDiagram() {
           <span className="text-[10px] text-gray-400 dark:text-gray-500 whitespace-nowrap">↩ {t('diagram.specFeedbackAction')}</span>
         </div>
 
+        <div /><div className="flex justify-center"><HookBadge hookKey="hooks.phase0" /></div><div />
         <div /><VLine label={t('diagram.ok')} /><div />
 
         {/* ─── Phase 1: Plan ─── */}
@@ -180,6 +191,7 @@ function WorkflowDiagram() {
           <span className="text-[10px] text-gray-400 dark:text-gray-500 whitespace-nowrap">↩ {t('diagram.planReviewAction')}</span>
         </div>
 
+        <div /><div className="flex justify-center"><HookBadge hookKey="hooks.phase1" /></div><div />
         <div /><VLine label={t('diagram.approves')} /><div />
 
         {/* ─── Git Prepare ─── */}
@@ -223,6 +235,7 @@ function WorkflowDiagram() {
         </DiagramTooltip>
         <div />
 
+        <div /><div className="flex justify-center"><HookBadge hookKey="hooks.phase2" /></div><div />
         <div /><VLine /><div />
 
         {/* ─── Phase 3: Quality Gate ─── */}
@@ -262,6 +275,7 @@ function WorkflowDiagram() {
           </div>
         </div>
 
+        <div /><div className="flex justify-center"><HookBadge hookKey="hooks.phase3" /></div><div />
         <div /><VLine label={`✓ ${t('diagram.ready')}`} /><div />
 
         {/* ─── Phase 4: Ship ─── */}
@@ -277,6 +291,7 @@ function WorkflowDiagram() {
         </DiagramTooltip>
         <div />
 
+        <div /><div className="flex justify-center"><HookBadge hookKey="hooks.phase4" /></div><div />
         <div /><VLine /><div />
 
         {/* ─── PR Review (pause) ─── */}
@@ -309,6 +324,7 @@ function WorkflowDiagram() {
           </div>
         </div>
 
+        <div /><div className="flex justify-center"><HookBadge hookKey="hooks.phase5" /></div><div />
         <div /><VLine label={t('diagram.approve')} /><div />
 
         {/* ─── Completada ─── */}

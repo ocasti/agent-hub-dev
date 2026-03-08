@@ -9,6 +9,8 @@ import { commitWipIfDirty, getDefaultBranch } from './git-ops';
 import { fetchUnresolvedPrFeedback, postThreadReplies, resolveReviewThreads, minimizeOldReviews, cleanupOldPRComments } from './github-api';
 import { runNativeTests, detectTestCommand } from './test-runner';
 import { execGraphQL } from './claude-cli';
+import { fireHook } from '../plugins/engine';
+import type { HookContext } from '../plugins/types';
 
 // ── Fetch & Fix (PR Feedback → re-run phases 2-4) ─────────────────────────────
 
@@ -40,6 +42,17 @@ export async function runFetchAndFix(
       activeControllers.delete(taskId);
       return;
     }
+
+    // Build hook context for plugin system
+    const hookCtx: HookContext = {
+      taskId,
+      projectId: task.project_id,
+      projectPath: projectPath,
+      taskTitle: task.title,
+      taskDescription: task.description,
+      branchName: task.branch_name || undefined,
+      prNumber: task.pr_number || undefined,
+    };
 
     sendLog(q, getWindow, taskId, projectName, '── Fetch & Fix: Reading PR comments ──', 'info');
     q.updateTaskStatus.run('pr_fixing', taskId);
@@ -260,6 +273,7 @@ export async function runFetchAndFix(
     }
 
     sendLog(q, getWindow, taskId, projectName, `Found ${feedback.threads.length} unresolved review thread(s). Processing one by one...`, 'info');
+    await fireHook('on:pr_changes_requested', { ...hookCtx, phase: 5, phaseLabel: 'pr_fixing', commentCount: feedback.threads.length }, db);
 
     let accepted = 0;
     let rejected = 0;
@@ -630,6 +644,7 @@ Fix the test failures and ensure all tests pass.`;
 
       if (decision.action === 'approve') {
         pushApproved = true;
+        await fireHook('on:pr_approved', { ...hookCtx, phase: 5, phaseLabel: 'pr_feedback', prNumber: task.pr_number || undefined }, db);
       } else if (decision.action === 'reject') {
         sendLog(q, getWindow, taskId, projectName, 'Push rejected by user. Discarding local changes.', 'info');
         try {
@@ -706,6 +721,7 @@ Fix the test failures and ensure all tests pass.`;
       `Fetch & Fix complete (cycle ${newCycleNum}). ${accepted} accepted, ${rejected} rejected with justification. Waiting for human review.`,
       'ok'
     );
+    await fireHook('on:pr_fix_pushed', { ...hookCtx, phase: 5, phaseLabel: 'pr_feedback', prNumber: task.pr_number || undefined, reviewLoop: newCycleNum }, db);
     activeControllers.delete(taskId);
 
   } catch (err) {

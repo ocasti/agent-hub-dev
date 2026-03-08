@@ -141,6 +141,10 @@ export interface HookContext {
   phase?: number;
   phaseLabel?: string;
   reviewLoop?: number;
+  error?: string;              // for workflow_failed, ship_failed
+  specSuggestions?: string[];  // for spec_needs_input
+  planSummary?: string;        // for plan_ready
+  commentCount?: number;       // for pr_changes_requested
   pluginConfig?: Record<string, string>;
   extra?: Record<string, unknown>;
 }

@@ -168,11 +168,12 @@ The workflow has two layers: **core phases** (always present) and **plugin phase
 Phase 0 — Spec Review
   ├── hook: on:before_spec (enrichment — PM plugin can inject requirement data)
   ├── Claude analyzes spec
-  ├── If incomplete → pause with suggestions → user edits/accepts
+  ├── If incomplete → hook: on:spec_needs_input → pause with suggestions → user edits/accepts
   └── hook: on:spec_complete
 
 Phase 1 — Plan
   ├── Claude decomposes into subtasks
+  ├── hook: on:plan_ready (plan generated, awaiting approval)
   ├── Plan review gate → user approves or re-plans
   └── hook: on:plan_approved (PM plugin can create dev_tasks)
 
@@ -182,10 +183,12 @@ Phase 2 — Implement
   └── hook: on:implement_complete (PM plugin can mark subtasks done)
 
 Phase 3 — Quality Gate (loop)
+  ├── hook: on:review_started (each review iteration)
   ├── Claude reviews code quality
   ├── If pass → hook: on:quality_pass (PM plugin can mark criteria met)
   ├── If fail → hook: on:quality_fail (PM plugin can create QA issue)
   ├── Fix → re-review (up to maxReviewLoops)
+  ├── If max loops → hook: on:quality_max_loops
   └── hook: on:core_complete
 ```
 
@@ -193,15 +196,26 @@ Phase 3 — Quality Gate (loop)
 
 ```
 Phase 4 — Ship (capability: "ship")
+  ├── hook: on:ship_started
   ├── Conventional commit + push + create PR/MR
+  ├── If fail → hook: on:ship_failed
   ├── hook: on:pr_created (PM → status "In Review", Notify → message)
   └── Pause: waiting for human review
 
 Phase 5 — PR Feedback (capability: "pr_feedback")
   ├── User clicks "Fetch & Fix" or "Approve"
-  ├── If comments → Claude fixes → re-push
+  ├── If comments → hook: on:pr_changes_requested → Claude fixes → re-push → hook: on:pr_fix_pushed
   ├── hook: on:pr_approved (PM → status "Done", Notify → message)
   └── hook: on:task_complete (all plugins react)
+```
+
+### Lifecycle Hooks
+
+```
+on:workflow_started  — fired when the SDD workflow begins
+on:task_complete     — fired when task completes (Phase 3 or PR approved)
+on:workflow_failed   — fired on unrecoverable error
+on:workflow_aborted  — fired when user stops the agent
 ```
 
 ### Without Plugins
