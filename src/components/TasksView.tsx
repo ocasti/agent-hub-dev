@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { Task, Project, Log, ActiveAgent, Settings, LicenseLimits } from '../lib/types';
+import type { Task, Project, Log, ActiveAgent, Settings, LicenseLimits, TaskStatus } from '../lib/types';
 import Badge from './ui/Badge';
 import ProgressBar from './ui/ProgressBar';
 import TaskForm from './TaskForm';
@@ -38,10 +38,12 @@ export default function TasksView({
   onCreateTask, onUpdateTask, onDeleteTask, onStartTask, onStopTask, onContinueSpec, onContinuePlan, onFetchAndFix, onApproveTask,
   onApprovePush, onRejectPush, onRevisePush, onFixTests,
 }: TasksViewProps) {
-  const { t } = useTranslation(['tasks', 'common']);
+  const { t } = useTranslation(['tasks', 'common', 'workflow']);
   const [creating, setCreating] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [editing, setEditing] = useState<Task | null>(null);
+  const [filterProject, setFilterProject] = useState<string>('all');
+  const [filterStatus, setFilterStatus] = useState<string>('all');
 
   useEffect(() => {
     if (pendingEditTaskId) {
@@ -153,9 +155,27 @@ export default function TasksView({
     );
   }
 
+  // Available statuses from current tasks (for filter dropdown)
+  const availableStatuses = useMemo(() => {
+    const statuses = new Set(tasks.map((tk) => tk.status));
+    return Array.from(statuses).sort();
+  }, [tasks]);
+
+  // Filtered tasks
+  const filteredTasks = useMemo(() => {
+    let result = tasks;
+    if (filterProject !== 'all') {
+      result = result.filter((tk) => tk.projectId === filterProject);
+    }
+    if (filterStatus !== 'all') {
+      result = result.filter((tk) => tk.status === filterStatus);
+    }
+    return result;
+  }, [tasks, filterProject, filterStatus]);
+
   // List view grouped by project
   const tasksByProject: Record<string, { name: string; tasks: Task[] }> = {};
-  tasks.forEach((tk) => {
+  filteredTasks.forEach((tk) => {
     const key = tk.projectId || 'no-project';
     if (!tasksByProject[key]) tasksByProject[key] = { name: tk.projectName || t('noProject'), tasks: [] };
     tasksByProject[key].tasks.push(tk);
@@ -171,6 +191,41 @@ export default function TasksView({
         <button onClick={() => setCreating(true)} className="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-lg">
           {t('button.new')}
         </button>
+      </div>
+
+      {/* Filters */}
+      <div className="flex items-center gap-3">
+        <select
+          value={filterProject}
+          onChange={(e) => setFilterProject(e.target.value)}
+          className="border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-white rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+        >
+          <option value="all">{t('filter.allProjects', 'All projects')}</option>
+          {projects.map((p) => (
+            <option key={p.id} value={p.id}>{p.name}</option>
+          ))}
+        </select>
+        <select
+          value={filterStatus}
+          onChange={(e) => setFilterStatus(e.target.value)}
+          className="border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-white rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+        >
+          <option value="all">{t('filter.allStatuses', 'All statuses')}</option>
+          {availableStatuses.map((s) => (
+            <option key={s} value={s}>{t(`workflow:status.${s}`, s)}</option>
+          ))}
+        </select>
+        {(filterProject !== 'all' || filterStatus !== 'all') && (
+          <button
+            onClick={() => { setFilterProject('all'); setFilterStatus('all'); }}
+            className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+          >
+            {t('filter.clear', 'Clear filters')}
+          </button>
+        )}
+        <span className="text-xs text-gray-400 dark:text-gray-500 ml-auto">
+          {filteredTasks.length}/{tasks.length} {t('filter.showing', 'tasks')}
+        </span>
       </div>
 
       {Object.keys(tasksByProject).length === 0 && (

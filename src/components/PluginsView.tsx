@@ -296,6 +296,16 @@ export default function PluginsView({ licenseLimits, onOpenLogin }: PluginsViewP
                         {installing === plugin.id ? t('updating', 'Updating...') : t('update', 'Update to v') + update.version}
                       </button>
                     )}
+                    {catalog.find((c) => c.id === plugin.id)?.homepage && (
+                      <a
+                        href={catalog.find((c) => c.id === plugin.id)!.homepage}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs font-medium px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700"
+                      >
+                        {t('viewDocs', 'Docs')}
+                      </a>
+                    )}
                     <button
                       onClick={() => handleUninstall(plugin.id)}
                       className="text-xs font-medium px-3 py-1.5 rounded-lg border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20"
