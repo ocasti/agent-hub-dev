@@ -245,6 +245,7 @@ See [docs/PLUGIN-DEVELOPMENT.md](docs/PLUGIN-DEVELOPMENT.md) for the complete pl
 | **Enrichment** | Inject data into existing phases | PM: pre-fill specs from requirement |
 | **Actions** | Add manual buttons to UI | "Sync with PM", "Export to Drive" |
 | **Operations** | Reusable MCP tool call templates | `listMyWork`, `fetch`, `updateStatus` |
+| **Task Fields** | Inject dynamic fields into TaskForm | PM: searchable requirement selector with auto-fill |
 
 ### Storage
 

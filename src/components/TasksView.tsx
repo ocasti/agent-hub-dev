@@ -81,6 +81,25 @@ export default function TasksView({
     return true;
   };
 
+  // Available statuses from current tasks (for filter dropdown)
+  // NOTE: All hooks must be called before any conditional returns
+  const availableStatuses = useMemo(() => {
+    const statuses = new Set(tasks.map((tk) => tk.status));
+    return Array.from(statuses).sort();
+  }, [tasks]);
+
+  // Filtered tasks
+  const filteredTasks = useMemo(() => {
+    let result = tasks;
+    if (filterProject !== 'all') {
+      result = result.filter((tk) => tk.projectId === filterProject);
+    }
+    if (filterStatus !== 'all') {
+      result = result.filter((tk) => tk.status === filterStatus);
+    }
+    return result;
+  }, [tasks, filterProject, filterStatus]);
+
   // Task detail view
   const detailTask = detailId ? tasks.find((t) => t.id === detailId) : null;
   if (detailTask && !editing) {
@@ -154,24 +173,6 @@ export default function TasksView({
       />
     );
   }
-
-  // Available statuses from current tasks (for filter dropdown)
-  const availableStatuses = useMemo(() => {
-    const statuses = new Set(tasks.map((tk) => tk.status));
-    return Array.from(statuses).sort();
-  }, [tasks]);
-
-  // Filtered tasks
-  const filteredTasks = useMemo(() => {
-    let result = tasks;
-    if (filterProject !== 'all') {
-      result = result.filter((tk) => tk.projectId === filterProject);
-    }
-    if (filterStatus !== 'all') {
-      result = result.filter((tk) => tk.status === filterStatus);
-    }
-    return result;
-  }, [tasks, filterProject, filterStatus]);
 
   // List view grouped by project
   const tasksByProject: Record<string, { name: string; tasks: Task[] }> = {};

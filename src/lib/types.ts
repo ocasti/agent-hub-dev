@@ -229,9 +229,17 @@ export interface Plugin {
   capabilities: string[];
   level: 1 | 2;
   enabled: boolean;
-  source: 'official' | 'community';
+  source: 'official' | 'community' | 'local';
   config: Record<string, string>;
   configSchema?: PluginConfigField[];
+}
+
+export interface PluginConfigFieldSource {
+  server: string;
+  tool: string;
+  args?: Record<string, string>;
+  labelField: string;
+  valueField: string;
 }
 
 export interface PluginConfigField {
@@ -241,6 +249,7 @@ export interface PluginConfigField {
   required?: boolean;
   default?: string;
   options?: { label: string; value: string }[];
+  source?: PluginConfigFieldSource;
   description?: string;
   secret?: boolean;
 }
@@ -264,6 +273,40 @@ export interface CatalogPlugin {
   downloads?: number;
   configSchema?: PluginConfigField[];
   sha256?: string;
+}
+
+// ── PM Work Items (from plugin MCP) ──
+
+export interface PmWorkItem {
+  id: string;
+  title: string;
+  status?: string;
+  project?: string;
+}
+
+// ── Plugin Task Fields (injected into TaskForm) ──
+
+export interface PluginTaskFieldSource {
+  operation: string;
+}
+
+export interface PluginTaskFieldOnSelect {
+  fetch?: {
+    operation: string;
+    args: Record<string, string>;
+  };
+  fill: Record<string, string>;
+}
+
+export interface PluginTaskField {
+  key: string;
+  label: string;
+  type: 'text' | 'select';
+  position: string;
+  placeholder?: string;
+  source?: PluginTaskFieldSource;
+  onSelect?: PluginTaskFieldOnSelect;
+  pluginId: string;  // added by the backend so the frontend knows which plugin owns this field
 }
 
 // DB row types (snake_case from SQLite)
@@ -394,6 +437,8 @@ export interface ElectronAPI {
   executePluginAction: (pluginId: string, actionId: string, context: Record<string, string>) => Promise<unknown>;
   getPluginCatalog: (forceRefresh?: boolean) => Promise<CatalogPlugin[]>;
   installCatalogPlugin: (pluginId: string, config: Record<string, string>) => Promise<void>;
+  previewLocalPlugin: (folderPath: string) => Promise<{ id: string; name: string; version: string; description: string; author?: string; capabilities: string[]; level: 1 | 2; configSchema?: PluginConfigField[] }>;
+  installPluginFromDisk: (folderPath: string, config: Record<string, string>) => Promise<void>;
 
   // License
   activateLicense: (key: string) => Promise<{ plan: string; limits: LicenseLimits }>;
@@ -412,8 +457,21 @@ export interface ElectronAPI {
   onUpdateError: (callback: (error: string) => void) => () => void;
 
   // Plugin compatibility
+  fetchPluginConfigOptions: (
+    server: string,
+    tool: string,
+    labelField: string,
+    valueField: string,
+    args?: Record<string, string>
+  ) => Promise<{ label: string; value: string }[]>;
+  listPmWorkItems: (pluginId: string) => Promise<PmWorkItem[]>;
+
   checkPluginCompatibility: () => Promise<PluginCompatResult[]>;
   onPluginCompatWarning: (callback: (results: PluginCompatResult[]) => void) => () => void;
+
+  // Plugin task fields
+  getTaskFieldsForProject: (projectId: string) => Promise<PluginTaskField[]>;
+  executePluginOperation: (pluginId: string, operationId: string, args?: Record<string, string>) => Promise<unknown>;
 
   selectFolder: () => Promise<string | null>;
   selectImages: () => Promise<string[]>;

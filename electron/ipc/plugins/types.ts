@@ -12,6 +12,27 @@ export interface PluginManifest {
   requirements?: PluginRequirement[];
   requires?: { agentHub?: string };  // semver range for app compatibility
   configSchema?: ConfigField[];     // generates UI form automatically
+  taskFields?: TaskField[];         // fields injected into TaskForm when plugin is active
+}
+
+/** Declarative field injected into TaskForm by a plugin */
+export interface TaskField {
+  key: string;                      // stored in task (e.g. "pmWorkItemId")
+  label: string;
+  type: 'text' | 'select';
+  position: string;                 // "before:title", "after:model", "form.start", "form.end"
+  placeholder?: string;
+  source?: {                        // loads options from MCP (for select type)
+    operation: string;              // reference to manifest.json operations key
+  };
+  onSelect?: {                      // triggered when user selects an item
+    fetch?: {                       // fetch full detail of selected item
+      operation: string;            // reference to manifest.json operations key
+      args: Record<string, string>; // e.g. { "id": "$.id" } — $.field from selected item
+    };
+    fill: Record<string, string>;   // map result fields to task form fields
+                                    // e.g. { "title": "$.title", "description": "$.overview" }
+  };
 }
 
 export interface PluginRequirement {
@@ -21,6 +42,14 @@ export interface PluginRequirement {
   checkCommand?: string;            // e.g. "gh --version"
 }
 
+export interface ConfigFieldSource {
+  server: string;                   // MCP server name from ~/.claude.json
+  tool: string;                     // MCP tool name to call
+  args?: Record<string, string>;    // optional static args for the tool
+  labelField: string;               // property name for the label in each result item
+  valueField: string;               // property name for the value in each result item
+}
+
 export interface ConfigField {
   key: string;
   label: string;
@@ -28,6 +57,7 @@ export interface ConfigField {
   required?: boolean;
   default?: string;
   options?: { label: string; value: string }[];
+  source?: ConfigFieldSource;       // dynamic options from MCP server (for select fields)
   description?: string;
   secret?: boolean;                 // encrypted in SQLite
 }
@@ -64,6 +94,7 @@ export interface PluginOperation {
   tool: string;                     // MCP tool name
   server: string;                   // MCP server name
   args: Record<string, string>;     // args with {variable} placeholders
+  fieldMap?: Record<string, string>; // JSONPath-like field extraction from result
   description?: string;
 }
 
@@ -102,7 +133,7 @@ export interface InstalledPlugin {
   config: Record<string, string>;
   installedAt: string;
   pluginDir: string;                // filesystem path to plugin files
-  source: 'official' | 'community'; // who published it
+  source: 'official' | 'community' | 'local'; // who published it
   manifest?: PluginManifest;        // loaded at runtime
   workflow?: PluginWorkflow;        // loaded at runtime
 }

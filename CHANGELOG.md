@@ -17,6 +17,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Plugin categories**: Code Hosting, PM Tools, Notifications, and any future integration
 - **Plugin manifest schema**: `plugin.json`, `manifest.json`, `setup.json`
 - **Plugin documentation**: `docs/PLUGIN-DEVELOPMENT.md` — complete guide to create plugins
+- **Dynamic config fields**: `configSchema` fields with `source` property load options from MCP servers at runtime
+- **MCP client**: generic HTTP client for MCP Streamable HTTP transport with session management
+- **Task Fields system**: plugins declare `taskFields` in `plugin.json` to inject dynamic fields into TaskForm
+  - Declarative positioning: `before:title`, `after:project`, `form.start`, `form.end`, etc.
+  - Searchable select with `source` that loads options from plugin MCP operations
+  - `onSelect.fetch` calls a detail operation when user selects an item
+  - `onSelect.fill` auto-completes task form fields (title, description, criteria) from fetched data
+  - Fully agnostic: works with any PM tool (Codebranch, Jira, Linear, etc.) — only JSON changes
+- **Plugin operation execution**: new IPC endpoints `plugins:executeOperation` and `plugins:getTaskFields`
 
 ### Changed
 - **Workflow engine**: refactored from hardcoded 6 phases to dynamic core (4 phases) + plugin phases

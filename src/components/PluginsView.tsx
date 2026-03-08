@@ -8,10 +8,24 @@ import {
   getPluginCatalog,
   installCatalogPlugin,
   checkPluginCompatibility,
+  previewLocalPlugin,
+  installPluginFromDisk,
+  fetchPluginConfigOptions,
 } from '../lib/ipc';
 import UpgradePrompt from './ui/UpgradePrompt';
 
-type Tab = 'installed' | 'marketplace';
+type Tab = 'installed' | 'marketplace' | 'local';
+
+interface LocalPluginPreview {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  author?: string;
+  capabilities: string[];
+  level: 1 | 2;
+  configSchema?: PluginConfigField[];
+}
 
 const CATEGORIES = ['All', 'Code Hosting', 'PM Tools', 'Notifications', 'CI/CD', 'Documentation', 'Other'];
 
@@ -34,6 +48,11 @@ export default function PluginsView({ licenseLimits, onOpenLogin }: PluginsViewP
   const [configValues, setConfigValues] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [compatResults, setCompatResults] = useState<PluginCompatResult[]>([]);
+  const [localFolderPath, setLocalFolderPath] = useState<string | null>(null);
+  const [localPreview, setLocalPreview] = useState<LocalPluginPreview | null>(null);
+  const [localConfigValues, setLocalConfigValues] = useState<Record<string, string>>({});
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [localInstalling, setLocalInstalling] = useState(false);
 
   useEffect(() => {
     loadPlugins();
@@ -206,6 +225,16 @@ export default function PluginsView({ licenseLimits, onOpenLogin }: PluginsViewP
         >
           {t('marketplace', 'Marketplace')} ({catalog.length})
         </button>
+        <button
+          onClick={() => setTab('local')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            tab === 'local'
+              ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
+              : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+          }`}
+        >
+          {t('loadFromDisk', 'Load from Disk')}
+        </button>
       </div>
 
       {/* Error banner */}
@@ -237,6 +266,11 @@ export default function PluginsView({ licenseLimits, onOpenLogin }: PluginsViewP
                         {plugin.source === 'official' && (
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 font-medium">
                             {t('official', 'Official')}
+                          </span>
+                        )}
+                        {plugin.source === 'local' && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-teal-50 dark:bg-teal-900/30 text-teal-600 dark:text-teal-400 font-medium">
+                            {t('local', 'Local')}
                           </span>
                         )}
                         {isIncompatible && (
@@ -506,6 +540,157 @@ export default function PluginsView({ licenseLimits, onOpenLogin }: PluginsViewP
           )}
         </>
       )}
+
+      {/* ── Load from Disk tab ── */}
+      {tab === 'local' && (
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600 dark:text-gray-400">
+            {t('localDescription', 'Install a plugin from a local folder. The folder must contain a valid plugin.json file.')}
+          </p>
+
+          {/* Browse button */}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={async () => {
+                setLocalError(null);
+                setLocalPreview(null);
+                setLocalConfigValues({});
+                try {
+                  const folder = await window.electronAPI.selectFolder();
+                  if (!folder) return;
+                  setLocalFolderPath(folder);
+                  const preview = await previewLocalPlugin(folder);
+                  setLocalPreview(preview);
+                  if (preview.configSchema) {
+                    setLocalConfigValues(
+                      Object.fromEntries(preview.configSchema.map((f) => [f.key, f.default || '']))
+                    );
+                  }
+                } catch (err) {
+                  setLocalError(err instanceof Error ? err.message : 'Failed to load plugin');
+                }
+              }}
+              className="px-4 py-2 text-sm font-medium bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600"
+            >
+              {t('browseFolder', 'Browse Folder...')}
+            </button>
+            {localFolderPath && (
+              <span className="text-xs text-gray-500 dark:text-gray-400 font-mono truncate max-w-md">
+                {localFolderPath}
+              </span>
+            )}
+          </div>
+
+          {/* Error display */}
+          {localError && (
+            <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-4 py-2 text-sm text-red-600 dark:text-red-400 flex items-center justify-between">
+              <span>{localError}</span>
+              <button onClick={() => setLocalError(null)} className="text-red-400 hover:text-red-600 ml-2">&times;</button>
+            </div>
+          )}
+
+          {/* Preview card */}
+          {localPreview && (
+            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-5 space-y-3 max-w-lg">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-bold text-gray-800 dark:text-gray-200">{localPreview.name}</h3>
+                  <span className="text-[10px] font-mono text-gray-400 dark:text-gray-500">v{localPreview.version}</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 font-medium">
+                    {t('valid', 'Valid')}
+                  </span>
+                </div>
+                {localPreview.author && (
+                  <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{t('by', 'by')} {localPreview.author}</p>
+                )}
+              </div>
+
+              <p className="text-xs text-gray-600 dark:text-gray-400">{localPreview.description}</p>
+
+              <div className="flex flex-wrap gap-1">
+                {localPreview.capabilities.map((cap) => (
+                  <span
+                    key={cap}
+                    className="text-[10px] px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 font-medium"
+                  >
+                    {cap}
+                  </span>
+                ))}
+              </div>
+
+              {/* Config form */}
+              {localPreview.configSchema && localPreview.configSchema.length > 0 && (
+                <ConfigForm
+                  fields={localPreview.configSchema}
+                  values={localConfigValues}
+                  onChange={setLocalConfigValues}
+                  onSave={async () => {
+                    if (!localFolderPath) return;
+                    setLocalInstalling(true);
+                    setLocalError(null);
+                    try {
+                      await installPluginFromDisk(localFolderPath, localConfigValues);
+                      setLocalPreview(null);
+                      setLocalFolderPath(null);
+                      setLocalConfigValues({});
+                      await loadPlugins();
+                      setTab('installed');
+                    } catch (err) {
+                      setLocalError(err instanceof Error ? err.message : 'Install failed');
+                    } finally {
+                      setLocalInstalling(false);
+                    }
+                  }}
+                  onCancel={() => { setLocalPreview(null); setLocalFolderPath(null); setLocalConfigValues({}); }}
+                  saveLabel={localInstalling ? t('installing', 'Installing...') : t('installPlugin', 'Install')}
+                  t={t}
+                />
+              )}
+
+              {/* Install button (no config) */}
+              {(!localPreview.configSchema || localPreview.configSchema.length === 0) && (
+                <div className="flex gap-2 pt-1">
+                  <button
+                    onClick={async () => {
+                      if (!localFolderPath) return;
+                      setLocalInstalling(true);
+                      setLocalError(null);
+                      try {
+                        await installPluginFromDisk(localFolderPath, {});
+                        setLocalPreview(null);
+                        setLocalFolderPath(null);
+                        await loadPlugins();
+                        setTab('installed');
+                      } catch (err) {
+                        setLocalError(err instanceof Error ? err.message : 'Install failed');
+                      } finally {
+                        setLocalInstalling(false);
+                      }
+                    }}
+                    disabled={localInstalling}
+                    className="text-xs font-medium px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
+                  >
+                    {localInstalling ? (
+                      <span className="flex items-center gap-1.5">
+                        <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        {t('installing', 'Installing...')}
+                      </span>
+                    ) : (
+                      t('installPlugin', 'Install')
+                    )}
+                  </button>
+                  <button
+                    onClick={() => { setLocalPreview(null); setLocalFolderPath(null); }}
+                    className="text-xs font-medium px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700"
+                  >
+                    {t('cancel', 'Cancel')}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -529,6 +714,37 @@ function ConfigForm({
   saveLabel?: string;
   t: ReturnType<typeof useTranslation>['t'];
 }) {
+  const [dynamicOptions, setDynamicOptions] = useState<Record<string, { label: string; value: string }[]>>({});
+  const [loadingOptions, setLoadingOptions] = useState<Record<string, boolean>>({});
+  const [optionErrors, setOptionErrors] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    // Load dynamic options for fields with source
+    const sourcedFields = fields.filter((f) => f.type === 'select' && f.source);
+    if (sourcedFields.length === 0) return;
+
+    for (const field of sourcedFields) {
+      const src = field.source!;
+      setLoadingOptions((prev) => ({ ...prev, [field.key]: true }));
+      fetchPluginConfigOptions(src.server, src.tool, src.labelField, src.valueField, src.args)
+        .then((options) => {
+          setDynamicOptions((prev) => ({ ...prev, [field.key]: options }));
+          setOptionErrors((prev) => { const next = { ...prev }; delete next[field.key]; return next; });
+        })
+        .catch((err) => {
+          setOptionErrors((prev) => ({ ...prev, [field.key]: err instanceof Error ? err.message : 'Failed to load options' }));
+        })
+        .finally(() => {
+          setLoadingOptions((prev) => ({ ...prev, [field.key]: false }));
+        });
+    }
+  }, [fields]);
+
+  const getSelectOptions = (field: PluginConfigField): { label: string; value: string }[] => {
+    if (field.source) return dynamicOptions[field.key] || [];
+    return field.options || [];
+  };
+
   return (
     <div className="border-t border-gray-100 dark:border-gray-700 pt-3 space-y-2">
       {fields.map((field) => (
@@ -541,15 +757,36 @@ function ConfigForm({
             <p className="text-[10px] text-gray-400 dark:text-gray-500 mb-1">{field.description}</p>
           )}
           {field.type === 'select' ? (
-            <select
-              value={values[field.key] || field.default || ''}
-              onChange={(e) => onChange({ ...values, [field.key]: e.target.value })}
-              className="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-indigo-500"
-            >
-              {field.options?.map((opt) => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
+            <>
+              {loadingOptions[field.key] ? (
+                <div className="flex items-center gap-1.5 py-1.5">
+                  <div className="w-3 h-3 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                  <span className="text-[10px] text-gray-400">{t('loadingOptions', 'Loading options...')}</span>
+                </div>
+              ) : optionErrors[field.key] ? (
+                <div className="space-y-1">
+                  <p className="text-[10px] text-red-500">{optionErrors[field.key]}</p>
+                  <input
+                    type="text"
+                    value={values[field.key] || ''}
+                    onChange={(e) => onChange({ ...values, [field.key]: e.target.value })}
+                    placeholder={t('manualEntry', 'Enter value manually...')}
+                    className="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+              ) : (
+                <select
+                  value={values[field.key] || field.default || ''}
+                  onChange={(e) => onChange({ ...values, [field.key]: e.target.value })}
+                  className="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="">{t('selectOption', '-- Select --')}</option>
+                  {getSelectOptions(field).map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              )}
+            </>
           ) : (
             <input
               type={field.secret ? 'password' : 'text'}

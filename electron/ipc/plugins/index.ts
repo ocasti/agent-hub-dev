@@ -4,10 +4,43 @@ import { join } from 'path';
 import { app } from 'electron';
 import type Database from 'better-sqlite3';
 import { loadAllPlugins, getRegistryCatalog } from './loader';
-import { installPlugin, uninstallPlugin, updatePluginConfig, downloadAndInstallPlugin, installBundledPlugin, checkPluginCompatibility } from './installer';
+import { installPlugin, uninstallPlugin, updatePluginConfig, downloadAndInstallPlugin, installBundledPlugin, checkPluginCompatibility, previewLocalPlugin, installPluginFromDisk } from './installer';
 import { checkCapabilityConflicts, executeOperation } from './engine';
-import type { InstalledPlugin, CatalogPlugin } from './types';
+import { fetchConfigOptions, getMcpServerConfig, callMcpHttpTool, extractOptionsFromResult } from './mcp-client';
+import type { InstalledPlugin, CatalogPlugin, TaskField } from './types';
 import { canInstallCommunityPlugin } from '../license';
+
+// ── JSONPath-like field extraction ──────────────────────────────────────────────
+
+function extractFieldByPath(obj: unknown, path: string): unknown {
+  if (!obj || typeof obj !== 'object') return undefined;
+  // Remove leading "$."
+  const cleanPath = path.replace(/^\$\./, '');
+
+  // Handle array wildcard: "items[*].field"
+  const wildcardMatch = cleanPath.match(/^(.+?)\[\*\]\.(.+)$/);
+  if (wildcardMatch) {
+    const arrayField = wildcardMatch[1];
+    const subField = wildcardMatch[2];
+    const arr = (obj as Record<string, unknown>)[arrayField];
+    if (!Array.isArray(arr)) return [];
+    return arr.map((item) => {
+      if (item && typeof item === 'object') return (item as Record<string, unknown>)[subField];
+      return undefined;
+    }).filter((v) => v !== undefined);
+  }
+
+  // Simple dot-path: "field.sub"
+  let current: unknown = obj;
+  for (const part of cleanPath.split('.')) {
+    if (current && typeof current === 'object') {
+      current = (current as Record<string, unknown>)[part];
+    } else {
+      return undefined;
+    }
+  }
+  return current;
+}
 
 // ── Secret masking ──────────────────────────────────────────────────────────────
 
@@ -157,6 +190,16 @@ export function registerPluginHandlers(ipcMain: IpcMain, db: Database.Database) 
     }
   });
 
+  // Preview a local plugin folder (validates without installing)
+  ipcMain.handle('plugins:previewLocalPlugin', (_event, folderPath: string) => {
+    return previewLocalPlugin(folderPath);
+  });
+
+  // Install plugin from a local folder on disk
+  ipcMain.handle('plugins:installFromDisk', async (_event, folderPath: string, config: Record<string, string>) => {
+    await installPluginFromDisk(folderPath, config);
+  });
+
   // Check compatibility of all installed plugins
   ipcMain.handle('plugins:checkCompatibility', () => {
     const plugins = loadAllPlugins();
@@ -171,6 +214,120 @@ export function registerPluginHandlers(ipcMain: IpcMain, db: Database.Database) 
           reason: result.reason,
         };
       });
+  });
+
+  // Fetch dynamic config options from MCP server
+  ipcMain.handle('plugins:fetchConfigOptions', async (
+    _event,
+    server: string,
+    tool: string,
+    labelField: string,
+    valueField: string,
+    args?: Record<string, string>
+  ) => {
+    return fetchConfigOptions(server, tool, labelField, valueField, args);
+  });
+
+  // List PM work items from a plugin's MCP server
+  ipcMain.handle('plugins:listWorkItems', async (_event, pluginId: string) => {
+    const allPlugins = loadAllPlugins();
+    const plugin = allPlugins.find((p) => p.id === pluginId);
+    if (!plugin) throw new Error(`Plugin "${pluginId}" not found`);
+
+    // Find the listMyWork operation in the manifest
+    const manifest = plugin.workflow;
+    const operation = manifest?.operations?.['listMyWork'];
+    if (!operation) throw new Error(`Plugin "${pluginId}" has no listMyWork operation`);
+
+    const config = getMcpServerConfig(operation.server);
+    const result = await callMcpHttpTool(config, operation.tool, operation.args || {});
+
+    // Extract structured items using fieldMap or defaults
+    const fieldMap = (operation as { fieldMap?: Record<string, string> }).fieldMap;
+    const idField = fieldMap?.id?.replace(/^\$\./, '') || 'id';
+    const titleField = fieldMap?.title?.replace(/^\$\./, '') || 'title';
+    const statusField = fieldMap?.status?.replace(/^\$\./, '') || 'status';
+    const projectField = fieldMap?.project?.replace(/^\$\./, '') || 'project';
+
+    // Normalize result to array
+    let items: unknown[];
+    if (Array.isArray(result)) {
+      items = result;
+    } else if (result && typeof result === 'object') {
+      const obj = result as Record<string, unknown>;
+      const arrayProp = Object.values(obj).find((v) => Array.isArray(v));
+      items = (arrayProp as unknown[]) || [];
+    } else {
+      items = [];
+    }
+
+    return items.map((item) => {
+      const r = item as Record<string, unknown>;
+      return {
+        id: String(r[idField] || ''),
+        title: String(r[titleField] || ''),
+        status: r[statusField] ? String(r[statusField]) : undefined,
+        project: r[projectField] ? String(r[projectField]) : undefined,
+      };
+    }).filter((wi) => wi.id && wi.title);
+  });
+
+  // Get task fields declared by active plugins for a project
+  ipcMain.handle('plugins:getTaskFields', (_event, projectId: string) => {
+    const project = db.prepare('SELECT code_hosting, plugin_pm FROM projects WHERE id = ?').get(projectId) as
+      { code_hosting: string | null; plugin_pm: string | null } | undefined;
+    if (!project) return [];
+
+    const allPlugins = loadAllPlugins();
+    const activeIds = new Set<string>();
+    if (project.code_hosting) activeIds.add(project.code_hosting);
+    if (project.plugin_pm) activeIds.add(project.plugin_pm);
+
+    const fields: (TaskField & { pluginId: string })[] = [];
+    for (const plugin of allPlugins) {
+      if (!activeIds.has(plugin.id) || !plugin.manifest?.taskFields) continue;
+      for (const field of plugin.manifest.taskFields) {
+        fields.push({ ...field, pluginId: plugin.id });
+      }
+    }
+    return fields;
+  });
+
+  // Execute a plugin operation by ID and return the result (used by taskField onSelect.fetch)
+  ipcMain.handle('plugins:executeOperation', async (_event, pluginId: string, operationId: string, args?: Record<string, string>) => {
+    const allPlugins = loadAllPlugins();
+    const plugin = allPlugins.find((p) => p.id === pluginId);
+    if (!plugin) throw new Error(`Plugin "${pluginId}" not found`);
+
+    const operation = plugin.workflow?.operations?.[operationId];
+    if (!operation) throw new Error(`Operation "${operationId}" not found in plugin "${pluginId}"`);
+
+    const config = getMcpServerConfig(operation.server);
+
+    // Merge plugin config + provided args, resolve template variables
+    const vars: Record<string, string> = { ...plugin.config, ...(args || {}) };
+    const resolvedArgs: Record<string, string> = {};
+    for (const [key, value] of Object.entries(operation.args)) {
+      resolvedArgs[key] = value.replace(/\{(\w+(?:\.\w+)?)\}/g, (_, k) => {
+        // Support {config.xxx} and {xxx}
+        const configMatch = k.match(/^config\.(.+)$/);
+        if (configMatch) return plugin.config[configMatch[1]] || '';
+        return vars[k] || '';
+      });
+    }
+
+    const result = await callMcpHttpTool(config, operation.tool, resolvedArgs);
+
+    // Apply fieldMap if present to extract structured data
+    if (operation.fieldMap) {
+      const mapped: Record<string, unknown> = {};
+      for (const [field, path] of Object.entries(operation.fieldMap)) {
+        mapped[field] = extractFieldByPath(result, path);
+      }
+      return mapped;
+    }
+
+    return result;
   });
 
   // Execute a manual plugin action

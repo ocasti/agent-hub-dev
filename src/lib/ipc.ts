@@ -13,6 +13,8 @@ import type {
   UpdateInfo,
   UpdateProgress,
   PluginCompatResult,
+  PmWorkItem,
+  PluginTaskField,
 } from './types';
 
 const api = () => window.electronAPI;
@@ -122,6 +124,10 @@ export const getPluginCatalog = (forceRefresh?: boolean): Promise<CatalogPlugin[
   api().getPluginCatalog(forceRefresh);
 export const installCatalogPlugin = (pluginId: string, config: Record<string, string>): Promise<void> =>
   api().installCatalogPlugin(pluginId, config);
+export const previewLocalPlugin = (folderPath: string) =>
+  api().previewLocalPlugin(folderPath);
+export const installPluginFromDisk = (folderPath: string, config: Record<string, string>): Promise<void> =>
+  api().installPluginFromDisk(folderPath, config);
 
 // ── License ──
 export const activateLicense = (key: string): Promise<{ plan: string; limits: LicenseLimits }> =>
@@ -144,6 +150,26 @@ export const onUpdateDownloaded = (cb: (info: UpdateInfo) => void): (() => void)
   api().onUpdateDownloaded(cb);
 export const onUpdateError = (cb: (error: string) => void): (() => void) =>
   api().onUpdateError(cb);
+
+// ── Plugin PM work items ──
+export const listPmWorkItems = (pluginId: string): Promise<PmWorkItem[]> =>
+  api().listPmWorkItems(pluginId);
+
+// ── Plugin dynamic config options ──
+export const fetchPluginConfigOptions = (
+  server: string,
+  tool: string,
+  labelField: string,
+  valueField: string,
+  args?: Record<string, string>
+): Promise<{ label: string; value: string }[]> =>
+  api().fetchPluginConfigOptions(server, tool, labelField, valueField, args);
+
+// ── Plugin task fields ──
+export const getTaskFieldsForProject = (projectId: string): Promise<PluginTaskField[]> =>
+  api().getTaskFieldsForProject(projectId);
+export const executePluginOperation = (pluginId: string, operationId: string, args?: Record<string, string>): Promise<unknown> =>
+  api().executePluginOperation(pluginId, operationId, args);
 
 // ── Plugin compatibility ──
 export const checkPluginCompatibility = (): Promise<PluginCompatResult[]> =>

@@ -111,6 +111,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('plugins:catalog', forceRefresh),
   installCatalogPlugin: (pluginId: string, config: Record<string, string>) =>
     ipcRenderer.invoke('plugins:installFromCatalog', pluginId, config),
+  previewLocalPlugin: (folderPath: string) =>
+    ipcRenderer.invoke('plugins:previewLocalPlugin', folderPath),
+  installPluginFromDisk: (folderPath: string, config: Record<string, string>) =>
+    ipcRenderer.invoke('plugins:installFromDisk', folderPath, config),
 
   // License
   activateLicense: (key: string) => ipcRenderer.invoke('license:activate', key),
@@ -143,6 +147,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('update:error', handler);
     return () => ipcRenderer.removeListener('update:error', handler);
   },
+
+  // Plugin dynamic config options from MCP
+  fetchPluginConfigOptions: (server: string, tool: string, labelField: string, valueField: string, args?: Record<string, string>) =>
+    ipcRenderer.invoke('plugins:fetchConfigOptions', server, tool, labelField, valueField, args),
+  listPmWorkItems: (pluginId: string) =>
+    ipcRenderer.invoke('plugins:listWorkItems', pluginId),
+
+  // Plugin task fields
+  getTaskFieldsForProject: (projectId: string) =>
+    ipcRenderer.invoke('plugins:getTaskFields', projectId),
+  executePluginOperation: (pluginId: string, operationId: string, args?: Record<string, string>) =>
+    ipcRenderer.invoke('plugins:executeOperation', pluginId, operationId, args),
 
   // Plugin compatibility
   checkPluginCompatibility: () => ipcRenderer.invoke('plugins:checkCompatibility'),

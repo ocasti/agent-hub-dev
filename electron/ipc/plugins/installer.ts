@@ -317,6 +317,95 @@ export async function installBundledPlugin(
   }
 }
 
+// ── Local Plugin Install ─────────────────────────────────────────────────────────
+
+export function previewLocalPlugin(folderPath: string): PluginManifest {
+  const pluginJsonPath = join(folderPath, 'plugin.json');
+  if (!existsSync(pluginJsonPath)) {
+    throw new Error('No plugin.json found in the selected folder');
+  }
+
+  let manifest: PluginManifest;
+  try {
+    manifest = JSON.parse(readFileSync(pluginJsonPath, 'utf-8')) as PluginManifest;
+  } catch {
+    throw new Error('Invalid plugin.json: failed to parse JSON');
+  }
+
+  if (!manifest.id || !manifest.name || !manifest.version) {
+    throw new Error('Invalid plugin.json: missing required fields (id, name, version)');
+  }
+
+  const compat = checkPluginCompatibility(manifest);
+  if (!compat.compatible) {
+    throw new Error(`Incompatible plugin: ${compat.reason}`);
+  }
+
+  return manifest;
+}
+
+export async function installPluginFromDisk(
+  folderPath: string,
+  config: Record<string, string>
+): Promise<void> {
+  // Read plugin.json to get plugin ID
+  const pluginJsonPath = join(folderPath, 'plugin.json');
+  if (!existsSync(pluginJsonPath)) {
+    throw new Error('No plugin.json found in the selected folder');
+  }
+
+  const manifest = JSON.parse(readFileSync(pluginJsonPath, 'utf-8')) as PluginManifest;
+  if (!manifest.id) {
+    throw new Error('Invalid plugin.json: missing id field');
+  }
+
+  const pluginId = manifest.id;
+  const pluginDir = join(app.getPath('home'), '.config', 'agent-hub', 'plugins', pluginId);
+
+  // If already installed, uninstall old version first
+  const installed = getInstalledPlugins();
+  const existing = installed.find((p) => p.id === pluginId);
+  if (existing) {
+    await uninstallPlugin(pluginId);
+  }
+
+  // Copy folder to plugin directory
+  mkdirSync(pluginDir, { recursive: true });
+  cpSync(folderPath, pluginDir, { recursive: true });
+
+  // Load manifest and workflow from installed location
+  const loadedManifest = loadPluginManifest(pluginDir);
+  const workflow = loadPluginWorkflow(pluginDir);
+
+  // Register in installed.json
+  const entry: InstalledPlugin = {
+    id: pluginId,
+    version: manifest.version || '0.0.0',
+    enabled: true,
+    config,
+    source: 'local',
+    installedAt: new Date().toISOString(),
+    pluginDir,
+    manifest: loadedManifest || undefined,
+    workflow: workflow || undefined,
+  };
+
+  const currentInstalled = getInstalledPlugins();
+  currentInstalled.push(entry);
+  saveInstalledPlugins(currentInstalled);
+
+  // Execute setup.json if present
+  const setupPath = join(pluginDir, 'setup.json');
+  if (existsSync(setupPath)) {
+    try {
+      const setup = JSON.parse(readFileSync(setupPath, 'utf-8')) as PluginSetup;
+      await executeMcpSetup(setup);
+    } catch (err) {
+      console.error(`[plugins] Setup execution failed for ${pluginId}:`, err);
+    }
+  }
+}
+
 // ── Download helpers (A3: hardened) ──────────────────────────────────────────────
 
 function downloadFile(url: string, destPath: string, depth = 0): Promise<void> {

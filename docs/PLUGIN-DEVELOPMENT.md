@@ -10,6 +10,8 @@ This document describes everything needed to create a plugin for Agent Hub. Plug
 2. [Plugin Architecture](#plugin-architecture)
 3. [Plugin Package Structure](#plugin-package-structure)
 4. [plugin.json — Identity & Configuration](#pluginjson--identity--configuration)
+   - [Config Schema & Dynamic Options](#config-field-types)
+   - [Task Fields — Dynamic Form Injection](#task-fields--dynamic-form-injection)
 5. [manifest.json — Workflow Integration](#manifestjson--workflow-integration)
 6. [setup.json — Installation Steps](#setupjson--installation-steps)
 7. [Workflow Hooks Reference](#workflow-hooks-reference)
@@ -36,6 +38,7 @@ Plugins do NOT contain application code that runs inside Agent Hub (except Level
 - Declaring **operations** that map to MCP tool calls
 - Declaring **phases** that extend the workflow (optional)
 - Declaring **actions** that add manual buttons to the UI
+- Declaring **task fields** that inject dynamic fields into the task creation/edit form
 
 The MCP (Model Context Protocol) is the universal transport layer. If a service has an MCP server, it can be integrated as a plugin.
 
@@ -152,9 +155,38 @@ This file defines who the plugin is and what it needs from the user.
       "helpUrl": "string — link to docs for getting this value (optional)",
       "helpText": "string — inline help text below the field (optional)",
       "options": "string[] — choices for 'select' and 'multiselect' types",
-      "validation": "string — regex pattern for validation (optional)"
+      "validation": "string — regex pattern for validation (optional)",
+      "source": {
+        "server": "string — MCP server name from ~/.claude.json",
+        "tool": "string — MCP tool name to call for dynamic options",
+        "labelField": "string — property name for option label in results",
+        "valueField": "string — property name for option value in results",
+        "args": "object — optional static args for the MCP tool call"
+      }
     }
-  }
+  },
+
+  "taskFields": [
+    {
+      "key": "string — field key stored in the task (e.g., 'pmWorkItemId')",
+      "label": "string — field label shown in the TaskForm UI",
+      "type": "string — 'text' or 'select'",
+      "position": "string — where to inject the field in the form (see positions below)",
+      "placeholder": "string — placeholder text (optional)",
+      "source": {
+        "operation": "string — reference to a manifest.json operation that returns a list"
+      },
+      "onSelect": {
+        "fetch": {
+          "operation": "string — manifest.json operation to call for full item detail",
+          "args": { "key": "string — $.field maps to selected item property" }
+        },
+        "fill": {
+          "<formField>": "string — $.field from fetched result to auto-fill into the task form"
+        }
+      }
+    }
+  ]
 }
 ```
 
@@ -171,7 +203,125 @@ This file defines who the plugin is and what it needs from the user.
 | `number` | Numeric input | Number | Optional min/max via validation |
 | `boolean` | Toggle switch | Boolean | true/false |
 
-### Example — PM Tool
+### Dynamic Config Options via MCP
+
+Config fields of type `select` can declare a `source` property to load options dynamically from an MCP server at runtime, instead of using a static `options` array. This is useful when the available choices depend on the user's account data (e.g., project list, status list, workspace list).
+
+```json
+{
+  "key": "statusInProgress",
+  "label": "Status: In Progress",
+  "type": "select",
+  "required": true,
+  "source": {
+    "server": "pm-tool",
+    "tool": "list_requirement_statuses",
+    "labelField": "name",
+    "valueField": "id"
+  }
+}
+```
+
+When the plugin config form renders, Agent Hub calls the specified MCP `tool` on `server` and populates the dropdown with results, using `labelField` for display and `valueField` for the stored value. If the MCP call fails, the field degrades to a manual text input.
+
+### Task Fields — Dynamic Form Injection
+
+Plugins can declare `taskFields` to inject dynamic fields into the TaskForm when the plugin is active for a project. This is how PM tools add a requirement selector, and any plugin type can add fields relevant to task creation.
+
+**How it works:**
+
+1. User selects a project in TaskForm
+2. Agent Hub calls `plugins:getTaskFields` for that project
+3. Fields declared by active plugins are rendered at their declared positions
+4. When user interacts with a field (e.g., selects an item), the plugin's `onSelect` triggers:
+   - `fetch`: calls an MCP operation to get full item details
+   - `fill`: auto-completes task form fields from the fetched data
+
+**Position values:**
+
+| Position | Where it renders |
+|----------|-----------------|
+| `form.start` | Top of the form (before all fields) |
+| `before:project` | Before the project selector |
+| `after:project` | After the project selector |
+| `before:title` | Before the title field |
+| `after:title` | After the title field |
+| `before:description` | Before the spec/description field |
+| `after:description` | After the spec/description field |
+| `before:criteria` | Before the acceptance criteria field |
+| `after:criteria` | After the acceptance criteria field |
+| `before:images` | Before the images section |
+| `after:images` | After the images section |
+| `before:model` | Before the model selector |
+| `after:model` | After the model selector |
+| `form.end` | Bottom of the form (after all fields) |
+
+**`onSelect.fill` target fields:**
+
+The `fill` mapping keys correspond to TaskForm fields:
+
+| Fill key | Task form field |
+|----------|----------------|
+| `title` | Task title |
+| `description` | Spec / description textarea |
+| `acceptanceCriteria` | Acceptance criteria (array joins with newlines) |
+| `pmWorkItemId` | PM work item ID |
+| `pmWorkItemUrl` | PM work item URL |
+
+**`onSelect.fetch.args` syntax:**
+
+Args use `$.field` to reference properties from the selected list item. For example, `{ "pmWorkItemId": "$.id" }` passes the selected item's `id` as the `pmWorkItemId` argument to the operation.
+
+**Fallback behavior:**
+
+If the MCP call to load options fails, the field degrades gracefully to a manual text input so the user can still enter the value by hand.
+
+### Example — Task Fields (PM Requirement Selector)
+
+```json
+{
+  "id": "pm-example",
+  "name": "Example PM",
+  "version": "1.0.0",
+  "capabilities": ["pm"],
+  "level": 1,
+
+  "taskFields": [
+    {
+      "key": "pmWorkItemId",
+      "label": "Requirement",
+      "type": "select",
+      "position": "before:title",
+      "placeholder": "Search requirements...",
+      "source": {
+        "operation": "listMyWork"
+      },
+      "onSelect": {
+        "fetch": {
+          "operation": "fetch",
+          "args": { "pmWorkItemId": "$.id" }
+        },
+        "fill": {
+          "title": "$.title",
+          "description": "$.description",
+          "acceptanceCriteria": "$.criteria",
+          "pmWorkItemUrl": "$.figmaLink"
+        }
+      }
+    }
+  ]
+}
+```
+
+When a user selects "My Requirement" from the dropdown:
+1. `listMyWork` operation is called → populates the searchable dropdown
+2. User picks an item → `fetch` operation is called with the item's ID
+3. The fetched requirement's title, description, and criteria are auto-filled into the task form
+4. User can review and edit before saving
+
+This pattern works identically for Jira, Linear, Azure DevOps, or any PM tool — only the `operations` in `manifest.json` and the `fill` field paths change.
+
+### Example — PM Tool (Config Schema)
 
 ```json
 {

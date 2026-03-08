@@ -212,13 +212,14 @@ Agent Hub uses a capability-based plugin system. Plugins extend the workflow wit
 - **Enrichment**: inject data into existing phases (e.g., PM pre-fills specs)
 - **Actions**: add manual buttons to UI (e.g., "Sync with PM")
 - **Operations**: reusable MCP tool call templates (listMyWork, fetch, updateStatus)
+- **Task Fields**: inject dynamic fields into TaskForm (e.g., PM adds a requirement selector before the title field)
 
 ### Plugin Levels
 - **Level 1** (declarative): JSON manifests + MCP — for PM tools, Notifications, CI/CD, Docs
 - **Level 2** (adapter): TypeScript module — for Code Hosting (GitHub, GitLab, Bitbucket)
 
 ### Plugin Files
-- `plugin.json`: identity, requirements, config schema (generates UI form automatically)
+- `plugin.json`: identity, requirements, config schema (generates UI form), task fields (dynamic form injection)
 - `manifest.json`: workflow hooks, operations, field mappings, status mappings
 - `setup.json`: installation steps (MCP configuration, CLI checks)
 
