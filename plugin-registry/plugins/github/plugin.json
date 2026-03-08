@@ -1,7 +1,7 @@
 {
   "id": "github",
   "name": "GitHub",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "Agent Hub",
   "description": "Git operations, pull requests, and code review via GitHub CLI",
   "homepage": "https://github.com/ocasti/agent-hub-dev/blob/main/plugin-registry/plugins/github/README.md",
@@ -23,6 +23,28 @@
       "required": false,
       "default": "main",
       "description": "The default branch for pull request targets (e.g. main, master, develop)"
+    },
+    {
+      "key": "token",
+      "label": "GitHub Token",
+      "type": "text",
+      "required": false,
+      "secret": true,
+      "description": "Personal access token (GH_TOKEN). Leave empty to use gh auth login credentials."
+    },
+    {
+      "key": "authorName",
+      "label": "Git Author Name",
+      "type": "text",
+      "required": false,
+      "description": "Override git commit author name. Leave empty to use global git config."
+    },
+    {
+      "key": "authorEmail",
+      "label": "Git Author Email",
+      "type": "text",
+      "required": false,
+      "description": "Override git commit author email. Leave empty to use global git config."
     }
   ]
 }

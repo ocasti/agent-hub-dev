@@ -15,10 +15,10 @@ export function slugify(text: string): string {
 /**
  * Detect the default branch of the repo (main, master, or develop).
  */
-export async function getDefaultBranch(projectPath: string): Promise<string> {
+export async function getDefaultBranch(projectPath: string, extraEnv?: Record<string, string | undefined>): Promise<string> {
   // Try symbolic ref to origin HEAD first
   try {
-    const ref = await execFileAsync('git', ['symbolic-ref', 'refs/remotes/origin/HEAD', '--short'], projectPath);
+    const ref = await execFileAsync('git', ['symbolic-ref', 'refs/remotes/origin/HEAD', '--short'], projectPath, 30000, false, extraEnv);
     const branch = ref.trim().replace('origin/', '');
     if (branch) return branch;
   } catch {
@@ -27,7 +27,7 @@ export async function getDefaultBranch(projectPath: string): Promise<string> {
   // Check which common branches exist locally
   for (const candidate of ['main', 'master', 'develop']) {
     try {
-      await execFileAsync('git', ['rev-parse', '--verify', candidate], projectPath);
+      await execFileAsync('git', ['rev-parse', '--verify', candidate], projectPath, 30000, false, extraEnv);
       return candidate;
     } catch {
       // doesn't exist
@@ -46,14 +46,15 @@ export async function commitWipIfDirty(
   taskId: string,
   projectName: string,
   q: Queries,
-  getWindow: GetWindow
+  getWindow: GetWindow,
+  extraEnv?: Record<string, string | undefined>
 ): Promise<void> {
   try {
-    const status = await execFileAsync('git', ['status', '--porcelain'], projectPath);
+    const status = await execFileAsync('git', ['status', '--porcelain'], projectPath, 30000, false, extraEnv);
     if (status.trim().length > 0) {
       sendLog(q, getWindow, taskId, projectName, 'Git: uncommitted changes detected. Creating WIP commit...', 'info');
-      await execFileAsync('git', ['add', '-A'], projectPath);
-      await execFileAsync('git', ['commit', '-m', 'WIP: auto-save before branch switch [agent-hub]'], projectPath);
+      await execFileAsync('git', ['add', '-A'], projectPath, 30000, false, extraEnv);
+      await execFileAsync('git', ['commit', '-m', 'WIP: auto-save before branch switch [agent-hub]'], projectPath, 30000, false, extraEnv);
       sendLog(q, getWindow, taskId, projectName, 'Git: WIP commit created', 'ok');
     }
   } catch (err) {
@@ -74,16 +75,17 @@ export async function prepareGitBranch(
   taskId: string,
   projectName: string,
   q: Queries,
-  getWindow: GetWindow
+  getWindow: GetWindow,
+  extraEnv?: Record<string, string | undefined>
 ): Promise<string> {
   // WIP commit any uncommitted changes before branch switch
-  await commitWipIfDirty(projectPath, taskId, projectName, q, getWindow);
+  await commitWipIfDirty(projectPath, taskId, projectName, q, getWindow, extraEnv);
 
   // If we already have a branch from a previous run, just switch to it
   if (existingBranch) {
     sendLog(q, getWindow, taskId, projectName, `Git: switching to existing branch ${existingBranch}`, 'info');
     try {
-      await execFileAsync('git', ['checkout', existingBranch], projectPath);
+      await execFileAsync('git', ['checkout', existingBranch], projectPath, 30000, false, extraEnv);
       sendLog(q, getWindow, taskId, projectName, `Git: on branch ${existingBranch}`, 'ok');
       return existingBranch;
     } catch (err) {
@@ -92,12 +94,12 @@ export async function prepareGitBranch(
   }
 
   // Detect default branch
-  const defaultBranch = await getDefaultBranch(projectPath);
+  const defaultBranch = await getDefaultBranch(projectPath, extraEnv);
   sendLog(q, getWindow, taskId, projectName, `Git: default branch is ${defaultBranch}`, 'info');
 
   // Checkout default branch
   try {
-    await execFileAsync('git', ['checkout', defaultBranch], projectPath);
+    await execFileAsync('git', ['checkout', defaultBranch], projectPath, 30000, false, extraEnv);
     sendLog(q, getWindow, taskId, projectName, `Git: checked out ${defaultBranch}`, 'ok');
   } catch (err) {
     sendLog(q, getWindow, taskId, projectName, `Git: checkout ${defaultBranch} warning: ${(err as Error).message}`, 'info');
@@ -105,7 +107,7 @@ export async function prepareGitBranch(
 
   // Pull latest
   try {
-    await execFileAsync('git', ['pull', 'origin', defaultBranch], projectPath, 60000);
+    await execFileAsync('git', ['pull', 'origin', defaultBranch], projectPath, 60000, false, extraEnv);
     sendLog(q, getWindow, taskId, projectName, `Git: pulled latest from origin/${defaultBranch}`, 'ok');
   } catch (err) {
     sendLog(q, getWindow, taskId, projectName, `Git: pull warning: ${(err as Error).message}. Continuing with local state.`, 'info');
@@ -120,16 +122,16 @@ export async function prepareGitBranch(
   const seq = String(next).padStart(4, '0');
   const branchName = `feature/${seq}-${slug}`;
   try {
-    await execFileAsync('git', ['checkout', '-b', branchName], projectPath);
+    await execFileAsync('git', ['checkout', '-b', branchName], projectPath, 30000, false, extraEnv);
     sendLog(q, getWindow, taskId, projectName, `Git: created branch ${branchName}`, 'ok');
   } catch {
     // Branch might already exist — try switching to it
     try {
-      await execFileAsync('git', ['checkout', branchName], projectPath);
+      await execFileAsync('git', ['checkout', branchName], projectPath, 30000, false, extraEnv);
       sendLog(q, getWindow, taskId, projectName, `Git: branch ${branchName} already exists, switched to it`, 'ok');
     } catch (err2) {
       sendLog(q, getWindow, taskId, projectName, `Git: branch error: ${(err2 as Error).message}. Continuing on current branch.`, 'error');
-      const current = await execFileAsync('git', ['branch', '--show-current'], projectPath).catch(() => 'unknown');
+      const current = await execFileAsync('git', ['branch', '--show-current'], projectPath, 30000, false, extraEnv).catch(() => 'unknown');
       return current.trim() || branchName;
     }
   }

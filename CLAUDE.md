@@ -48,11 +48,16 @@ agent-hub/
 │   │   │   ├── prompt-builder.ts  # Enriched prompt construction
 │   │   │   ├── output-parser.ts   # Phase output parsing
 │   │   │   ├── git-ops.ts         # Branch, commit, push operations
-│   │   │   ├── pr-feedback.ts     # Fetch & Fix cycle (via code-hosting plugin)
+│   │   │   ├── pr-feedback.ts     # Fetch & Fix cycle (via code-hosting adapter)
 │   │   │   ├── test-runner.ts     # Native test detection & execution
 │   │   │   ├── repo-analysis.ts   # Project analysis & CLAUDE.md reading
 │   │   │   ├── state.ts           # Resolver maps & helpers
-│   │   │   └── types.ts           # Shared interfaces & constants
+│   │   │   ├── types.ts           # Shared interfaces & constants
+│   │   │   └── adapters/          # Code hosting adapter pattern
+│   │   │       ├── types.ts       # CodeHostingAdapter interface
+│   │   │       ├── github.ts      # GitHub adapter (gh CLI)
+│   │   │       ├── registry.ts    # Adapter registry + credential resolver
+│   │   │       └── index.ts       # Re-exports
 │   │   ├── plugins/               # Plugin system
 │   │   │   ├── loader.ts          # Read & parse plugin manifests
 │   │   │   ├── engine.ts          # Hook dispatch, template resolution

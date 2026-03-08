@@ -5,17 +5,24 @@ import { sendLog } from './state';
 
 // ── Clean env (strip CLAUDECODE to avoid nested-session block) ─────────────────
 
-export function cleanEnv(): NodeJS.ProcessEnv {
+export function cleanEnv(extraEnv?: Record<string, string | undefined>): NodeJS.ProcessEnv {
   const env = { ...process.env };
   delete env.CLAUDECODE;
+  if (extraEnv) {
+    for (const [key, value] of Object.entries(extraEnv)) {
+      if (value !== undefined) {
+        env[key] = value;
+      }
+    }
+  }
   return env;
 }
 
 // ── execFileAsync ──────────────────────────────────────────────────────────────
 
-export function execFileAsync(cmd: string, args: string[], cwd?: string, timeoutMs: number = 30000, useShell: boolean = false): Promise<string> {
+export function execFileAsync(cmd: string, args: string[], cwd?: string, timeoutMs: number = 30000, useShell: boolean = false, extraEnv?: Record<string, string | undefined>): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, { shell: useShell, env: cleanEnv(), cwd, timeout: timeoutMs }, (error, stdout) => {
+    execFile(cmd, args, { shell: useShell, env: cleanEnv(extraEnv), cwd, timeout: timeoutMs }, (error, stdout) => {
       if (error) reject(error);
       else resolve(stdout);
     });
@@ -30,7 +37,8 @@ export function execGraphQL(
   query: string,
   cwd: string,
   timeoutMs: number = 30000,
-  variables?: Record<string, string | number>
+  variables?: Record<string, string | number>,
+  extraEnv?: Record<string, string | undefined>
 ): Promise<string> {
   const args = ['api', 'graphql', '-f', `query=${query}`];
   if (variables) {
@@ -45,7 +53,7 @@ export function execGraphQL(
   return new Promise((resolve, reject) => {
     execFile('gh', args, {
       shell: false,
-      env: cleanEnv(),
+      env: cleanEnv(extraEnv),
       cwd,
       timeout: timeoutMs,
     }, (error, stdout, stderr) => {
@@ -65,7 +73,8 @@ export function runClaudePhase(
   q: Queries,
   getWindow: GetWindow,
   controller: AbortController,
-  timeoutMs: number = 600000
+  timeoutMs: number = 600000,
+  extraEnv?: Record<string, string | undefined>
 ): Promise<{ output: string; exitCode: number }> {
   return new Promise((resolve, reject) => {
     if (controller.signal.aborted) {
@@ -88,7 +97,7 @@ export function runClaudePhase(
       ['--model', modelFlag, '--print', '--permission-mode', 'bypassPermissions'],
       {
         cwd: projectPath,
-        env: cleanEnv(),
+        env: cleanEnv(extraEnv),
         shell: false,
         stdio: ['pipe', 'pipe', 'pipe'],
       }

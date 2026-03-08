@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { Project, Plugin } from '../lib/types';
+import type { Project, Plugin, CodeHostingProjectConfig } from '../lib/types';
 import { OPTIONAL_SKILLS } from '../lib/skills';
 import { selectFolder, getGitRemote, analyzeRepo, getPlugins } from '../lib/ipc';
 import SkillTag from './ui/SkillTag';
@@ -22,6 +22,7 @@ export default function ProjectForm({ project, onSave, onCancel }: ProjectFormPr
     optionalSkills: project?.optionalSkills || [] as string[],
     testCommand: project?.testCommand || '',
     codeHosting: project?.codeHosting || '',
+    codeHostingConfig: project?.codeHostingConfig || {} as CodeHostingProjectConfig,
     pluginPm: project?.pluginPm || '',
     pluginPmConfig: project?.pluginPmConfig || {} as Record<string, string>,
   });
@@ -201,6 +202,58 @@ export default function ProjectForm({ project, onSave, onCancel }: ProjectFormPr
           <p className="text-xs text-gray-300 dark:text-gray-600 mt-1">{t('form.pmToolHelp', 'Injects requirements into workflow')}</p>
         </div>
       </div>
+
+      {/* Code Hosting Credential Override (per-project) */}
+      {form.codeHosting && (
+        <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 space-y-3">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">
+              {t('form.credentialOverride', 'Project Credentials')}
+            </span>
+            <span className="text-[10px] text-gray-400 dark:text-gray-500 font-normal normal-case">
+              {t('form.credentialOverrideHelp', 'Override global plugin config for this project')}
+            </span>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
+                {t('form.labelToken', 'Token')}
+              </label>
+              <input
+                type="password"
+                value={form.codeHostingConfig.token || ''}
+                onChange={(e) => setForm({ ...form, codeHostingConfig: { ...form.codeHostingConfig, token: e.target.value } })}
+                placeholder={t('form.placeholderToken', 'Use global config')}
+                className="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
+                {t('form.labelAuthorName', 'Git Author Name')}
+              </label>
+              <input
+                type="text"
+                value={form.codeHostingConfig.authorName || ''}
+                onChange={(e) => setForm({ ...form, codeHostingConfig: { ...form.codeHostingConfig, authorName: e.target.value } })}
+                placeholder={t('form.placeholderAuthorName', 'Use global config')}
+                className="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
+                {t('form.labelAuthorEmail', 'Git Author Email')}
+              </label>
+              <input
+                type="text"
+                value={form.codeHostingConfig.authorEmail || ''}
+                onChange={(e) => setForm({ ...form, codeHostingConfig: { ...form.codeHostingConfig, authorEmail: e.target.value } })}
+                placeholder={t('form.placeholderAuthorEmail', 'Use global config')}
+                className="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
       <div>
         <label className="block text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2 uppercase tracking-wider">{t('form.labelOptionalSkills')}</label>

@@ -90,11 +90,16 @@ agent-hub/
 │   │   │   ├── prompt-builder.ts     # Enriched prompt construction
 │   │   │   ├── output-parser.ts      # Phase output parsing
 │   │   │   ├── git-ops.ts           # Branch, commit, WIP operations
-│   │   │   ├── pr-feedback.ts       # Fetch & Fix cycle (uses code-hosting plugin)
+│   │   │   ├── pr-feedback.ts       # Fetch & Fix cycle (uses code-hosting adapter)
 │   │   │   ├── test-runner.ts       # Native test detection & execution
 │   │   │   ├── repo-analysis.ts     # Project analysis & CLAUDE.md reading
 │   │   │   ├── state.ts            # Resolver maps, abort controllers, waiters
-│   │   │   └── types.ts            # Shared interfaces & constants
+│   │   │   ├── types.ts            # Shared interfaces & constants
+│   │   │   └── adapters/            # Code hosting adapter pattern
+│   │   │       ├── types.ts         # CodeHostingAdapter interface & types
+│   │   │       ├── github.ts        # GitHub adapter (gh CLI)
+│   │   │       ├── registry.ts      # Adapter registry & credential resolver
+│   │   │       └── index.ts         # Public API re-exports
 │   │   ├── plugins/                  # Plugin system
 │   │   │   ├── loader.ts            # Read & parse plugin manifests
 │   │   │   ├── engine.ts            # Hook dispatch, template resolution, MCP calls
@@ -262,7 +267,7 @@ Agent Hub SQLite                 # Encrypted secrets, per-project plugin config
 
 ### Core Tables
 
-- **projects**: id, name, path, repo, description, optional_skills, test_command, code_hosting, plugin_pm, plugin_pm_config
+- **projects**: id, name, path, repo, description, optional_skills, test_command, code_hosting, code_hosting_config, plugin_pm, plugin_pm_config
 - **tasks**: id, project_id, title, description, acceptance_criteria, images, model, status, pr_number, review_cycle, spec_suggestions, plan_summary, branch_name, criteria_status, pm_work_item_id, pm_work_item_url
 - **agent_runs**: id, task_id, phase, started_at, finished_at, result, output, error_output
 - **logs**: id, task_id, project_name, message, kind, created_at
@@ -270,7 +275,7 @@ Agent Hub SQLite                 # Encrypted secrets, per-project plugin config
 - **review_patterns**: id, knowledge_id, task_id, reviewer, issue_found, fix_applied, phase, auto_fixable
 - **settings**: key, value
 
-### Plugin Columns (migration 004)
+### Plugin Columns (migration 010)
 
 ```sql
 ALTER TABLE projects ADD COLUMN code_hosting TEXT DEFAULT NULL;
@@ -278,6 +283,13 @@ ALTER TABLE projects ADD COLUMN plugin_pm TEXT DEFAULT NULL;
 ALTER TABLE projects ADD COLUMN plugin_pm_config TEXT DEFAULT '{}';
 ALTER TABLE tasks ADD COLUMN pm_work_item_id TEXT DEFAULT NULL;
 ALTER TABLE tasks ADD COLUMN pm_work_item_url TEXT DEFAULT NULL;
+```
+
+### Code Hosting Config (migration 012)
+
+```sql
+ALTER TABLE projects ADD COLUMN code_hosting_config TEXT DEFAULT '{}';
+-- Stores per-project credential overrides: { token, authorName, authorEmail, defaultBranch }
 ```
 
 ---
@@ -293,8 +305,73 @@ claude --model {sonnet|opus} --print --permission-mode bypassPermissions
 - Prompt is sent via **stdin** (avoids shell escaping and arg length limits)
 - Output is streamed **line by line** via stdout → IPC → renderer
 - MCP servers from `~/.claude.json` are automatically available
-- `cleanEnv()` strips `CLAUDECODE` env var to avoid nested session detection
+- `cleanEnv(extraEnv?)` strips `CLAUDECODE` env var and injects per-project credentials
 - macOS PATH fix ensures CLI tools are found when launched from Finder
+
+---
+
+## Code Hosting Adapter System
+
+The adapter system abstracts code hosting operations (GitHub, GitLab, Bitbucket) behind a common interface, enabling multi-provider and multi-account support.
+
+### Architecture
+
+```
+┌─────────────────────────────────────┐
+│         Orchestrator / PR Feedback   │
+│                                     │
+│  resolveEnvVars(projectId, db)      │
+│  → { GH_TOKEN, GIT_AUTHOR_NAME, …} │
+│                                     │
+│  All subprocess calls get extraEnv  │
+└──────────────┬──────────────────────┘
+               │
+    ┌──────────▼──────────┐
+    │   Adapter Registry   │
+    │                      │
+    │  resolveCredentials()│
+    │  = global config     │
+    │  + project override  │
+    └──────────┬──────────┘
+               │
+    ┌──────────▼──────────┐
+    │ CodeHostingAdapter   │
+    │ (interface)          │
+    │                      │
+    │ buildEnvVars()       │
+    │ createPR()           │
+    │ fetchFeedback()      │
+    │ postReplies()        │
+    │ resolveThreads()     │
+    │ minimizeOldComments()│
+    │ push()               │
+    └──────────┬──────────┘
+               │
+    ┌──────────▼──────────┐
+    │   GitHubAdapter      │ ← Future: GitLabAdapter, BitbucketAdapter
+    │   (gh CLI)           │
+    └─────────────────────┘
+```
+
+### Credential Resolution
+
+Per-project credentials override global plugin config:
+
+1. **Global**: `installed.json` → plugin config (`token`, `authorName`, `authorEmail`)
+2. **Per-project**: `projects.code_hosting_config` column (`{ token, authorName, authorEmail, defaultBranch }`)
+3. **Merge**: project values take precedence over global
+
+### Environment Variable Injection
+
+Credentials are converted to env vars and injected into every subprocess:
+
+| Adapter | Token var | Author vars |
+|---------|-----------|-------------|
+| GitHub | `GH_TOKEN` | `GIT_AUTHOR_NAME`, `GIT_COMMITTER_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_EMAIL` |
+| GitLab (future) | `GITLAB_TOKEN` | Same git vars |
+| Bitbucket (future) | `BITBUCKET_TOKEN` | Same git vars |
+
+This enables concurrent tasks with different accounts — no global `gh auth switch` needed.
 
 ---
 
@@ -306,7 +383,7 @@ claude --model {sonnet|opus} --print --permission-mode bypassPermissions
 | Database | SQLite (better-sqlite3) | Local, no server, sync in main process |
 | CLI execution | child_process.spawn | Direct subprocess, stdin for prompt, streamed output |
 | Plugin system | Declarative JSON + MCP | Extensible without code changes, universal transport |
-| Code hosting | Level 2 adapter (TS) | Platform APIs too different for declarative config |
+| Code hosting | Level 2 adapter (TS) + per-project env vars | Platform APIs too different for declarative config; env var injection enables multi-account |
 | PM integration | Level 1 declarative (JSON) | MCP normalizes different PM APIs |
 | Real-time logs | Electron IPC events | Native, no WebSocket overhead |
 | Skills | Read/write settings.json | Direct integration with Claude Code configuration |

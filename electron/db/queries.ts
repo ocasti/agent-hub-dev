@@ -6,11 +6,11 @@ export function createQueries(db: Database.Database) {
     getAllProjects: db.prepare('SELECT * FROM projects ORDER BY created_at DESC'),
     getProject: db.prepare('SELECT * FROM projects WHERE id = ?'),
     insertProject: db.prepare(
-      `INSERT INTO projects (id, name, path, repo, description, optional_skills, test_command, code_hosting, plugin_pm, plugin_pm_config, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
+      `INSERT INTO projects (id, name, path, repo, description, optional_skills, test_command, code_hosting, code_hosting_config, plugin_pm, plugin_pm_config, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
     ),
     updateProject: db.prepare(
-      `UPDATE projects SET name=?, path=?, repo=?, description=?, optional_skills=?, test_command=?, code_hosting=?, plugin_pm=?, plugin_pm_config=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`
+      `UPDATE projects SET name=?, path=?, repo=?, description=?, optional_skills=?, test_command=?, code_hosting=?, code_hosting_config=?, plugin_pm=?, plugin_pm_config=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`
     ),
     deleteProject: db.prepare('DELETE FROM projects WHERE id = ?'),
     getTaskIdsByProject: db.prepare('SELECT id FROM tasks WHERE project_id = ?'),

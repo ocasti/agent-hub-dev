@@ -15,6 +15,7 @@ interface ProjectInput {
   optionalSkills?: string[];
   testCommand?: string;
   codeHosting?: string | null;
+  codeHostingConfig?: Record<string, string>;
   pluginPm?: string | null;
   pluginPmConfig?: Record<string, string>;
 }
@@ -29,6 +30,7 @@ function rowToProject(row: Record<string, unknown>) {
     optionalSkills: JSON.parse((row.optional_skills as string) || '[]'),
     testCommand: (row.test_command as string) || '',
     codeHosting: (row.code_hosting as string) || undefined,
+    codeHostingConfig: JSON.parse((row.code_hosting_config as string) || '{}'),
     pluginPm: (row.plugin_pm as string) || undefined,
     pluginPmConfig: JSON.parse((row.plugin_pm_config as string) || '{}'),
     createdAt: row.created_at as string,
@@ -63,6 +65,7 @@ export function registerProjectHandlers(ipcMain: IpcMain, db: Database.Database)
       JSON.stringify(mergedSkills),
       project.testCommand || '',
       project.codeHosting || null,
+      JSON.stringify(project.codeHostingConfig || {}),
       project.pluginPm || null,
       JSON.stringify(project.pluginPmConfig || {})
     );
@@ -90,6 +93,7 @@ export function registerProjectHandlers(ipcMain: IpcMain, db: Database.Database)
       JSON.stringify(skills),
       updates.testCommand ?? (existing.test_command as string) ?? '',
       updates.codeHosting !== undefined ? updates.codeHosting : (existing.code_hosting as string | null),
+      updates.codeHostingConfig ? JSON.stringify(updates.codeHostingConfig) : (existing.code_hosting_config as string) || '{}',
       updates.pluginPm !== undefined ? updates.pluginPm : (existing.plugin_pm as string | null),
       updates.pluginPmConfig ? JSON.stringify(updates.pluginPmConfig) : (existing.plugin_pm_config as string) || '{}',
       id

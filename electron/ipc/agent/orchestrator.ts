@@ -12,6 +12,7 @@ import { prepareGitBranch, commitWipIfDirty } from './git-ops';
 import { fireHook, hasCodeHostingPlugin } from '../plugins/engine';
 import type { HookContext } from '../plugins/types';
 import { canUseModel } from '../license';
+import { resolveEnvVars, getProjectAdapter } from './adapters/registry';
 
 // ── SDD Workflow Orchestrator ──────────────────────────────────────────────────
 
@@ -44,6 +45,10 @@ export async function orchestrateSddWorkflow(
 
     // Validate model against license limits
     if (!canUseModel(db, model)) throw new Error('MODEL_NOT_AVAILABLE');
+
+    // Resolve code hosting env vars (token, author name/email) for all subprocess calls
+    const extraEnv = resolveEnvVars(task.project_id, db);
+
     const criteria = JSON.parse(task.acceptance_criteria || '[]') as string[];
     const knowledge = (q.getProjectKnowledge.all(task.project_id) || []) as KnowledgeRow[];
     const maxReviewLoops = getSettingValue(q, 'maxReviewLoops', 5);
@@ -86,7 +91,7 @@ export async function orchestrateSddWorkflow(
         // Save short description to DB
         const proj = q.getProject.get(task.project_id) as { name: string; path: string; repo: string | null; optional_skills: string; test_command?: string } | undefined;
         if (proj) {
-          q.updateProject.run(proj.name, proj.path, proj.repo, result.shortDescription, proj.optional_skills, proj.test_command ?? '', (proj as Record<string, unknown>).code_hosting ?? null, (proj as Record<string, unknown>).plugin_pm ?? null, (proj as Record<string, unknown>).plugin_pm_config ?? '{}', task.project_id);
+          q.updateProject.run(proj.name, proj.path, proj.repo, result.shortDescription, proj.optional_skills, proj.test_command ?? '', (proj as Record<string, unknown>).code_hosting ?? null, (proj as Record<string, unknown>).code_hosting_config ?? '{}', (proj as Record<string, unknown>).plugin_pm ?? null, (proj as Record<string, unknown>).plugin_pm_config ?? '{}', task.project_id);
         }
 
         sendLog(q, getWindow, taskId, projectName, 'Repo auto-analysis complete. CLAUDE.md created.', 'ok');
@@ -106,11 +111,11 @@ export async function orchestrateSddWorkflow(
     if (savedBranch && startPhase > 0) {
       sendLog(q, getWindow, taskId, projectName, `Git: ensuring correct branch (${savedBranch}) before resuming...`, 'info');
       try {
-        const currentBranch = (await execFileAsync('git', ['branch', '--show-current'], projectPath)).trim();
+        const currentBranch = (await execFileAsync('git', ['branch', '--show-current'], projectPath, 30000, false, extraEnv)).trim();
         if (currentBranch !== savedBranch) {
           // WIP commit any uncommitted changes on current branch before switching
-          await commitWipIfDirty(projectPath, taskId, projectName, q, getWindow);
-          await execFileAsync('git', ['checkout', savedBranch], projectPath);
+          await commitWipIfDirty(projectPath, taskId, projectName, q, getWindow, extraEnv);
+          await execFileAsync('git', ['checkout', savedBranch], projectPath, 30000, false, extraEnv);
           sendLog(q, getWindow, taskId, projectName, `Git: switched to branch ${savedBranch}`, 'ok');
         } else {
           sendLog(q, getWindow, taskId, projectName, `Git: already on branch ${savedBranch}`, 'ok');
@@ -131,7 +136,7 @@ export async function orchestrateSddWorkflow(
       sendLog(q, getWindow, taskId, projectName, '── Phase 0: Spec Review ──', 'info');
 
       const prompt = buildPhasePrompt(0, task, projectDescription, knowledge, criteria, undefined, useSpeckit);
-      const { output, exitCode } = await runClaudePhase(projectPath, model, prompt, taskId, q, getWindow, controller, 300000);
+      const { output, exitCode } = await runClaudePhase(projectPath, model, prompt, taskId, q, getWindow, controller, 300000, extraEnv);
 
       if (exitCode !== 0) {
         q.updateTaskStatus.run('failed', taskId);
@@ -208,7 +213,7 @@ export async function orchestrateSddWorkflow(
       sendLog(q, getWindow, taskId, projectName, '── Phase 1: Plan ──', 'info');
 
       const planPrompt = buildPhasePrompt(1, task, projectDescription, knowledge, criteria, undefined, useSpeckit);
-      const { output: planOutput, exitCode: planExit } = await runClaudePhase(projectPath, model, planPrompt, taskId, q, getWindow, controller, 600000);
+      const { output: planOutput, exitCode: planExit } = await runClaudePhase(projectPath, model, planPrompt, taskId, q, getWindow, controller, 600000, extraEnv);
 
       if (planExit !== 0) {
         q.updateTaskStatus.run('failed', taskId);
@@ -264,7 +269,7 @@ export async function orchestrateSddWorkflow(
       sendLog(q, getWindow, taskId, projectName, '── Git: Preparing feature branch ──', 'info');
 
       const branchName = await prepareGitBranch(
-        projectPath, task.title, task.branch_name, taskId, projectName, q, getWindow
+        projectPath, task.title, task.branch_name, taskId, projectName, q, getWindow, extraEnv
       );
 
       // Save branch name to task so resume can use it
@@ -282,7 +287,7 @@ export async function orchestrateSddWorkflow(
     if (startPhase <= 2) {
       checkAborted(controller);
       q.updateTaskLastPhase.run(2, taskId);
-      await runSimplePhase(2, 'implementing', taskId, task, projectPath, projectName, projectDescription, model, knowledge, criteria, q, getWindow, controller, useSpeckit);
+      await runSimplePhase(2, 'implementing', taskId, task, projectPath, projectName, projectDescription, model, knowledge, criteria, q, getWindow, controller, useSpeckit, extraEnv);
       await fireHook('on:implement_complete', { ...hookCtx, phase: 2, phaseLabel: 'implementing' }, db);
     }
 
@@ -303,7 +308,7 @@ export async function orchestrateSddWorkflow(
         await fireHook('on:review_started', { ...hookCtx, phase: 3, phaseLabel: 'reviewing', reviewLoop }, db);
 
         const prompt = buildPhasePrompt(3, task, projectDescription, knowledge, criteria, reviewLoop, useSpeckit);
-        const { output, exitCode } = await runClaudePhase(projectPath, model, prompt, taskId, q, getWindow, controller, 900000);
+        const { output, exitCode } = await runClaudePhase(projectPath, model, prompt, taskId, q, getWindow, controller, 900000, extraEnv);
 
         if (exitCode !== 0) {
           q.updateTaskStatus.run('failed', taskId);
@@ -338,7 +343,7 @@ export async function orchestrateSddWorkflow(
 
             const issuesText = (parsed.issues || []).map((i) => `- [${i.category}] ${i.description}`).join('\n');
             const fixPrompt = buildFixPrompt(task, projectDescription, knowledge, criteria, issuesText);
-            const fixResult = await runClaudePhase(projectPath, model, fixPrompt, taskId, q, getWindow, controller, 900000);
+            const fixResult = await runClaudePhase(projectPath, model, fixPrompt, taskId, q, getWindow, controller, 900000, extraEnv);
 
             if (fixResult.exitCode !== 0) {
               q.updateTaskStatus.run('failed', taskId);
@@ -383,7 +388,7 @@ export async function orchestrateSddWorkflow(
       await fireHook('on:ship_started', { ...hookCtx, phase: 4, phaseLabel: 'shipping' }, db);
 
       const prompt = buildPhasePrompt(4, task, projectDescription, knowledge, criteria, undefined, useSpeckit);
-      const { output, exitCode } = await runClaudePhase(projectPath, model, prompt, taskId, q, getWindow, controller, 600000);
+      const { output, exitCode } = await runClaudePhase(projectPath, model, prompt, taskId, q, getWindow, controller, 600000, extraEnv);
 
       if (exitCode !== 0) {
         await fireHook('on:ship_failed', { ...hookCtx, phase: 4, phaseLabel: 'shipping', error: 'Ship phase failed' }, db);
@@ -461,7 +466,8 @@ export async function runSimplePhase(
   q: Queries,
   getWindow: GetWindow,
   controller: AbortController,
-  useSpeckit?: boolean
+  useSpeckit?: boolean,
+  extraEnv?: Record<string, string | undefined>
 ) {
   q.updateTaskStatus.run(statusLabel, taskId);
   sendPhaseUpdate(getWindow, { taskId, phase: phaseNum, phaseLabel: statusLabel, status: 'started' });
@@ -469,7 +475,7 @@ export async function runSimplePhase(
 
   const phaseTimeouts: Record<number, number> = { 1: 600000, 2: 1800000 };
   const prompt = buildPhasePrompt(phaseNum, task, projectDescription, knowledge, criteria, undefined, useSpeckit);
-  const { exitCode } = await runClaudePhase(projectPath, model, prompt, taskId, q, getWindow, controller, phaseTimeouts[phaseNum] || 600000);
+  const { exitCode } = await runClaudePhase(projectPath, model, prompt, taskId, q, getWindow, controller, phaseTimeouts[phaseNum] || 600000, extraEnv);
 
   if (exitCode !== 0) {
     q.updateTaskStatus.run('failed', taskId);

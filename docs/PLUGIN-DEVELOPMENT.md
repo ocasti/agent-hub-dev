@@ -886,104 +886,111 @@ Note: `notifications` is listed as a capability but you may want multiple notifi
 
 ## Level 2 Plugins — TypeScript Adapters
 
-For Code Hosting plugins, the logic is too complex for declarative JSON (GraphQL queries, thread resolution, comment minimization, etc.). These plugins include a TypeScript adapter module.
+For Code Hosting plugins, the logic is too complex for declarative JSON (GraphQL queries, thread resolution, comment minimization, etc.). These plugins implement the `CodeHostingAdapter` interface.
 
-### CodeHostingPlugin Interface
+### CodeHostingAdapter Interface
 
 ```typescript
-// plugins/code-hosting/plugin-interface.ts
+// electron/ipc/agent/adapters/types.ts
 
-export interface CreatePROpts {
+interface CodeHostingCredentials {
+  token?: string;          // API token (GH_TOKEN, GITLAB_TOKEN, etc.)
+  authorName?: string;     // Git author name override
+  authorEmail?: string;    // Git author email override
+}
+
+interface CodeHostingEnvVars {
+  [key: string]: string | undefined;  // Env vars for subprocess injection
+}
+
+interface CreatePROptions {
   projectPath: string;
+  branchName: string;
+  baseBranch: string;
   title: string;
   body: string;
-  baseBranch: string;
-  headBranch: string;
+  taskId: string;
+  projectName: string;
 }
 
-export interface PRInfo {
-  number: number;
-  url: string;
-  state: string;
-  title: string;
+interface CreatePRResult {
+  prNumber: number;
+  prUrl: string;
+  branchName: string;
 }
 
-export interface ReviewThread {
-  id: string;
-  file: string;
-  line: number | null;
-  diffHunk: string | null;
-  comments: { author: string; body: string }[];
-}
+interface CodeHostingAdapter {
+  readonly id: string;     // 'github', 'gitlab', 'bitbucket'
+  readonly name: string;   // Human-readable name
+  readonly cli: string;    // CLI command required (e.g. 'gh', 'glab')
 
-export interface CodeHostingPlugin {
-  id: string;
-  name: string;
-  cli: string;
+  // Build env vars from credentials for subprocess injection
+  buildEnvVars(credentials: CodeHostingCredentials): CodeHostingEnvVars;
 
   // PR lifecycle
-  createPR(opts: CreatePROpts): Promise<PRInfo>;
-  getPR(projectPath: string, prNumber: number): Promise<PRInfo>;
-
-  // Review feedback
-  fetchUnresolvedThreads(projectPath: string, prNumber: number): Promise<ReviewThread[]>;
-  fetchGeneralComments(projectPath: string, prNumber: number): Promise<string>;
-  replyToThread(projectPath: string, threadId: string, body: string): Promise<void>;
-  resolveThread(projectPath: string, threadId: string): Promise<void>;
-
-  // Cleanup
-  minimizeOldComments(projectPath: string, prNumber: number, keepCycles: number): Promise<void>;
-  cleanupOldReviews(projectPath: string, prNumber: number, keepCycles: number): Promise<void>;
-
-  // Prompt fragments — tells Claude how to interact with this platform
-  getShipInstructions(): string;
-  getFeedbackFixInstructions(): string;
+  createPR(options: CreatePROptions, env: CodeHostingEnvVars, q, getWindow): Promise<CreatePRResult>;
+  fetchFeedback(options: FetchFeedbackOptions, env: CodeHostingEnvVars): Promise<FetchedPrFeedback>;
+  postReplies(options: PostRepliesOptions, env: CodeHostingEnvVars): Promise<void>;
+  resolveThreads(options: ResolveThreadsOptions, env: CodeHostingEnvVars): Promise<void>;
+  minimizeOldComments(options: MinimizeOptions, env: CodeHostingEnvVars): Promise<void>;
+  push(options: PushOptions, env: CodeHostingEnvVars, q, getWindow): Promise<void>;
 }
 ```
 
-### Adapter Structure
+### Per-Project Credential Resolution
 
-```
-agent-hub-plugin-gitlab/
-├── plugin.json
-├── manifest.json
-├── setup.json
-├── icon.svg
-└── adapter/
-    ├── index.ts             # Implements CodeHostingPlugin
-    ├── graphql-queries.ts   # GitLab-specific GraphQL
-    └── tsconfig.json
-```
+Credentials are resolved by merging two layers:
 
-### Compilation
+1. **Global plugin config** — from `installed.json` (applies to all projects using this plugin)
+2. **Per-project override** — from `projects.code_hosting_config` column (takes precedence)
 
-Level 2 adapters are written in TypeScript and compiled to JavaScript during plugin installation:
+```typescript
+// electron/ipc/agent/adapters/registry.ts
 
-```bash
-# During install, Agent Hub runs:
-cd ~/.config/agent-hub/plugins/gitlab/adapter/
-npx tsc --outDir dist/
-```
+function resolveCredentials(projectId, db): CodeHostingCredentials {
+  // 1. Load global plugin config
+  // 2. Apply per-project overrides (project wins)
+  // 3. Return merged credentials
+}
 
-The compiled `dist/index.js` is loaded by Agent Hub's plugin engine at runtime using `require()`.
-
-### adapter/tsconfig.json
-
-```json
-{
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "commonjs",
-    "moduleResolution": "node",
-    "outDir": "dist",
-    "strict": true,
-    "declaration": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true
-  },
-  "include": ["*.ts"]
+function resolveEnvVars(projectId, db): CodeHostingEnvVars | undefined {
+  // 1. Get project's active code hosting plugin
+  // 2. Get adapter for that plugin
+  // 3. Resolve credentials
+  // 4. adapter.buildEnvVars(credentials) → env vars
 }
 ```
+
+The orchestrator calls `resolveEnvVars()` at workflow start and passes the result to every subprocess call as `extraEnv`.
+
+### Environment Variable Mapping
+
+| Provider | Token var | Author vars |
+|----------|-----------|-------------|
+| GitHub | `GH_TOKEN` | `GIT_AUTHOR_NAME`, `GIT_COMMITTER_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_EMAIL` |
+| GitLab | `GITLAB_TOKEN` | Same git vars |
+| Bitbucket | `BITBUCKET_TOKEN` | Same git vars |
+
+### Adding a New Provider
+
+To add a new code hosting provider (e.g., GitLab):
+
+1. Create `electron/ipc/agent/adapters/gitlab.ts` implementing `CodeHostingAdapter`
+2. Register it in `registry.ts`: `adapters['gitlab'] = new GitLabAdapter()`
+3. Create `plugin-registry/plugins/gitlab/plugin.json` with `configSchema`
+4. The adapter's `buildEnvVars()` maps credentials to provider-specific env vars
+
+### Per-Project Config in ProjectForm
+
+When a code hosting plugin is active, the ProjectForm shows a "Project Credentials" section:
+
+| Field | Purpose |
+|-------|---------|
+| Token | Override global API token for this project |
+| Git Author Name | Override git commit author name |
+| Git Author Email | Override git commit author email |
+
+These are stored in `projects.code_hosting_config` as JSON. Empty fields fall back to global plugin config.
 
 ### Why Not Make Everything Level 2?
 

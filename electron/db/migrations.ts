@@ -168,4 +168,11 @@ export const MIGRATIONS = [
       INSERT OR IGNORE INTO settings (key, value) VALUES ('update_skipped_version', '');
     `,
   },
+  {
+    version: 12,
+    name: '012_code_hosting_config',
+    sql: `
+      ALTER TABLE projects ADD COLUMN code_hosting_config TEXT DEFAULT '{}';
+    `,
+  },
 ];

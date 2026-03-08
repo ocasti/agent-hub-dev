@@ -6,7 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased] — Plugin System
+## [1.1.0] — 2026-03-08 — Code Hosting Adapter System
+
+### Added
+- **CodeHostingAdapter interface**: abstraction layer for code hosting providers (GitHub, GitLab, Bitbucket)
+  - `CodeHostingAdapter` interface: `buildEnvVars()`, `createPR()`, `fetchFeedback()`, `postReplies()`, `resolveThreads()`, `minimizeOldComments()`, `push()`
+  - `GitHubAdapter` class: first implementation using `gh` CLI
+  - Adapter registry: `getAdapter()`, `registerAdapter()` — extensible for future providers
+- **Per-project credential overrides**: each project can override global plugin config (token, author name, author email, default branch)
+  - New DB column: `projects.code_hosting_config` (migration 012)
+  - Credential resolver: merges global plugin config with per-project overrides
+  - `CodeHostingProjectConfig` interface in frontend types
+- **Environment variable injection**: `GH_TOKEN`, `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`, `GIT_COMMITTER_EMAIL` injected per subprocess
+  - `cleanEnv(extraEnv?)` — merges extra env vars into subprocess environment
+  - All `execFileAsync()`, `execGraphQL()`, `runClaudePhase()` accept optional `extraEnv`
+  - All git-ops functions (`prepareGitBranch`, `commitWipIfDirty`, `getDefaultBranch`) accept optional `extraEnv`
+  - Supports concurrent tasks with different accounts (no global `gh auth switch`)
+- **Project credential UI**: "Project Credentials" section in ProjectForm when code hosting plugin is active
+  - Token (password field), Git Author Name, Git Author Email — all optional overrides
+- **GitHub plugin configSchema**: added `token`, `authorName`, `authorEmail` fields (global config)
+
+### Changed
+- **GitHub plugin**: version 1.0.0 → 1.1.0 with new configSchema fields
+- **Orchestrator**: resolves env vars at workflow start, passes `extraEnv` to all subprocess calls
+- **PR Feedback**: resolves env vars for both `runFetchAndFix()` and `runFetchAndFixPushOnly()`
+- **github-api.ts**: all 5 functions accept optional `extraEnv` parameter, passed to all `execFileAsync`/`execGraphQL` calls
+
+---
+
+## [1.0.0] — Plugin System
 
 ### Added
 - **Plugin architecture**: capability-based plugin system for extending Agent Hub without modifying core code

@@ -11,6 +11,7 @@ import { runNativeTests, detectTestCommand } from './test-runner';
 import { execGraphQL } from './claude-cli';
 import { fireHook } from '../plugins/engine';
 import type { HookContext } from '../plugins/types';
+import { resolveEnvVars } from './adapters/registry';
 
 // ── Fetch & Fix (PR Feedback → re-run phases 2-4) ─────────────────────────────
 
@@ -34,6 +35,9 @@ export async function runFetchAndFix(
     const model = task.model;
     const criteria = JSON.parse(task.acceptance_criteria || '[]') as string[];
     const knowledge = (q.getProjectKnowledge.all(task.project_id) || []) as KnowledgeRow[];
+
+    // Resolve code hosting env vars for all subprocess calls
+    const extraEnv = resolveEnvVars(task.project_id, db);
 
     // Check per-project limit: no other task actively running on this project
     const projectRunning = (q.getRunningTaskCountByProject.get(task.project_id, taskId) as { count: number }).count;
@@ -61,10 +65,10 @@ export async function runFetchAndFix(
     // Ensure we're on the task's branch before fixing
     if (task.branch_name) {
       try {
-        const currentBranch = (await execFileAsync('git', ['branch', '--show-current'], projectPath)).trim();
+        const currentBranch = (await execFileAsync('git', ['branch', '--show-current'], projectPath, 30000, false, extraEnv)).trim();
         if (currentBranch !== task.branch_name) {
-          await commitWipIfDirty(projectPath, taskId, projectName, q, getWindow);
-          await execFileAsync('git', ['checkout', task.branch_name], projectPath);
+          await commitWipIfDirty(projectPath, taskId, projectName, q, getWindow, extraEnv);
+          await execFileAsync('git', ['checkout', task.branch_name], projectPath, 30000, false, extraEnv);
           sendLog(q, getWindow, taskId, projectName, `Git: on branch ${task.branch_name}`, 'ok');
         } else {
           sendLog(q, getWindow, taskId, projectName, `Git: already on branch ${task.branch_name}`, 'ok');
@@ -77,7 +81,7 @@ export async function runFetchAndFix(
     // Create annotated rollback tag with thread count for cross-cycle regression detection
     const rollbackTag = `agent-hub/pre-fix-cycle-${task.review_cycle + 1}`;
     try {
-      await execFileAsync('git', ['tag', '-d', rollbackTag], projectPath, 5000, false).catch(() => {});
+      await execFileAsync('git', ['tag', '-d', rollbackTag], projectPath, 5000, false, extraEnv).catch(() => {});
     } catch { /* tag didn't exist */ }
     // Tag will be created after we know the thread count (below)
 
@@ -87,7 +91,7 @@ export async function runFetchAndFix(
       // Try common base branches to get the full commit log of this feature branch
       for (const base of ['main', 'master', 'develop']) {
         try {
-          branchHistory = (await execFileAsync('git', ['log', '--oneline', `${base}..HEAD`], projectPath, 10000)).trim();
+          branchHistory = (await execFileAsync('git', ['log', '--oneline', `${base}..HEAD`], projectPath, 10000, false, extraEnv)).trim();
           if (branchHistory) break;
         } catch { /* try next base */ }
       }
@@ -96,7 +100,7 @@ export async function runFetchAndFix(
     // Capture baseline diff size for post-fix validation
     let baselineDiffLines = 0;
     try {
-      const diffStat = (await execFileAsync('git', ['diff', '--shortstat', 'HEAD'], projectPath, 10000)).trim();
+      const diffStat = (await execFileAsync('git', ['diff', '--shortstat', 'HEAD'], projectPath, 10000, false, extraEnv)).trim();
       const linesMatch = diffStat.match(/(\d+) insertion|(\d+) deletion/g);
       if (linesMatch) {
         for (const m of linesMatch) {
@@ -108,7 +112,7 @@ export async function runFetchAndFix(
 
     // Fetch PR feedback: general comments + unresolved review threads (structured)
     const feedback = await fetchUnresolvedPrFeedback(
-      projectPath, task.pr_number, taskId, projectName, q, getWindow
+      projectPath, task.pr_number, taskId, projectName, q, getWindow, extraEnv
     );
 
     const totalItems = feedback.threads.length + (feedback.generalComments.trim() ? 1 : 0);
@@ -156,7 +160,7 @@ export async function runFetchAndFix(
     if (task.review_cycle > 0 && feedback.threads.length > 0) {
       const prevTag = `agent-hub/pre-fix-cycle-${task.review_cycle}`;
       try {
-        const tagMsg = (await execFileAsync('git', ['tag', '-l', '--format=%(contents)', prevTag], projectPath, 5000, false)).trim();
+        const tagMsg = (await execFileAsync('git', ['tag', '-l', '--format=%(contents)', prevTag], projectPath, 5000, false, extraEnv)).trim();
         const prevMatch = tagMsg.match(/threads:(\d+)/);
         const prevCritical = parseInt(tagMsg.match(/critical:(\d+)/)?.[1] || '0', 10);
         const prevHigh = parseInt(tagMsg.match(/high:(\d+)/)?.[1] || '0', 10);
@@ -191,8 +195,8 @@ export async function runFetchAndFix(
             sendLog(q, getWindow, taskId, projectName, `REGRESSION DETECTED: ${rollbackReason} Rolling back.`, 'error');
 
             try {
-              await execFileAsync('git', ['reset', '--hard', prevTag], projectPath, 15000);
-              await execFileAsync('git', ['push', '--force-with-lease'], projectPath, 30000);
+              await execFileAsync('git', ['reset', '--hard', prevTag], projectPath, 15000, false, extraEnv);
+              await execFileAsync('git', ['push', '--force-with-lease'], projectPath, 30000, false, extraEnv);
               sendLog(q, getWindow, taskId, projectName,
                 `Rollback complete. Branch reverted to before cycle ${task.review_cycle}.`,
                 'ok'
@@ -201,16 +205,16 @@ export async function runFetchAndFix(
               // Close all open threads — re-fetch after force push since old IDs are invalidated
               const prRollbackMsg = `Automatically reverted cycle ${task.review_cycle}. Reason: ${rollbackReason} Code has been rolled back to pre-fix state. These comments no longer apply to the current code.`;
               try {
-                const repoJson = await execFileAsync('gh', ['repo', 'view', '--json', 'owner,name'], projectPath);
+                const repoJson = await execFileAsync('gh', ['repo', 'view', '--json', 'owner,name'], projectPath, 30000, false, extraEnv);
                 const repoInfo = JSON.parse(repoJson.trim()) as { owner: { login: string }; name: string };
                 const freshQuery = `query($owner: String!, $name: String!, $pr: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $pr) { reviewThreads(first: 100) { nodes { id isResolved } } } } }`;
-                const freshOutput = await execGraphQL(freshQuery, projectPath, 10000, { owner: repoInfo.owner.login, name: repoInfo.name, pr: task.pr_number as number });
+                const freshOutput = await execGraphQL(freshQuery, projectPath, 10000, { owner: repoInfo.owner.login, name: repoInfo.name, pr: task.pr_number as number }, extraEnv);
                 const freshData = JSON.parse(freshOutput) as { data: { repository: { pullRequest: { reviewThreads: { nodes: { id: string; isResolved: boolean }[] } } } } };
                 const freshUnresolved = freshData.data.repository.pullRequest.reviewThreads.nodes.filter((t) => !t.isResolved);
                 const freshIds = freshUnresolved.map((t) => t.id);
                 if (freshIds.length > 0) {
-                  await postThreadReplies(projectPath, [{ threadId: freshIds[0], body: prRollbackMsg }], taskId, projectName, q, getWindow);
-                  await resolveReviewThreads(projectPath, freshIds, taskId, projectName, q, getWindow);
+                  await postThreadReplies(projectPath, [{ threadId: freshIds[0], body: prRollbackMsg }], taskId, projectName, q, getWindow, extraEnv);
+                  await resolveReviewThreads(projectPath, freshIds, taskId, projectName, q, getWindow, extraEnv);
                   sendLog(q, getWindow, taskId, projectName, `Closed ${freshIds.length} review threads (no longer applicable after rollback).`, 'ok');
                 }
               } catch (threadErr) {
@@ -218,7 +222,7 @@ export async function runFetchAndFix(
               }
 
               // Minimize old review comments as resolved
-              await minimizeOldReviews(projectPath, task.pr_number as number, taskId, projectName, q, getWindow);
+              await minimizeOldReviews(projectPath, task.pr_number as number, taskId, projectName, q, getWindow, extraEnv);
 
               const revertedCycle = Math.max(0, task.review_cycle - 1);
               q.updateTask.run(
@@ -247,7 +251,7 @@ export async function runFetchAndFix(
     // Create the annotated rollback tag with thread count AND severity breakdown
     try {
       const tagMessage = `threads:${feedback.threads.length},critical:${severityCounts.critical},high:${severityCounts.high},medium:${severityCounts.medium},low:${severityCounts.low}`;
-      await execFileAsync('git', ['tag', '-a', rollbackTag, '-m', tagMessage], projectPath, 5000, false);
+      await execFileAsync('git', ['tag', '-a', rollbackTag, '-m', tagMessage], projectPath, 5000, false, extraEnv);
       sendLog(q, getWindow, taskId, projectName, `Rollback point created: ${rollbackTag} (${tagMessage})`, 'ok');
     } catch (err) {
       sendLog(q, getWindow, taskId, projectName, `Warning: Could not create rollback tag: ${(err as Error).message}`, 'info');
@@ -258,7 +262,7 @@ export async function runFetchAndFix(
     try {
       for (const base of ['main', 'master', 'develop']) {
         try {
-          prFiles = (await execFileAsync('git', ['diff', '--name-only', `${base}...HEAD`], projectPath, 10000)).trim();
+          prFiles = (await execFileAsync('git', ['diff', '--name-only', `${base}...HEAD`], projectPath, 10000, false, extraEnv)).trim();
           if (prFiles) break;
         } catch { /* try next */ }
       }
@@ -295,7 +299,7 @@ export async function runFetchAndFix(
         type: 'general',
         content: feedback.generalComments,
       }, undefined, branchHistory, prFiles);
-      const { output, exitCode } = await runClaudePhase(projectPath, model, prompt, taskId, q, getWindow, controller, 600000);
+      const { output, exitCode } = await runClaudePhase(projectPath, model, prompt, taskId, q, getWindow, controller, 600000, extraEnv);
       if (exitCode !== 0) {
         sendLog(q, getWindow, taskId, projectName, 'Warning: Failed to process general comments. Continuing...', 'error');
       } else {
@@ -307,7 +311,7 @@ export async function runFetchAndFix(
         const gcReplies = parsed.threadReplies || [];
         const gcResolved = parsed.resolvedThreadIds || [];
         try {
-          const gcDiff = (await execFileAsync('git', ['diff', '--shortstat'], projectPath, 10000)).trim();
+          const gcDiff = (await execFileAsync('git', ['diff', '--shortstat'], projectPath, 10000, false, extraEnv)).trim();
           if (gcDiff || gcResolved.length > 0) {
             accepted += Math.max(gcResolved.length, gcDiff ? 1 : 0);
           }
@@ -327,7 +331,7 @@ export async function runFetchAndFix(
         } else {
           // No replies parsed — fallback to diff-based summary
           try {
-            const gcDiff = (await execFileAsync('git', ['diff', '--shortstat'], projectPath, 10000)).trim();
+            const gcDiff = (await execFileAsync('git', ['diff', '--shortstat'], projectPath, 10000, false, extraEnv)).trim();
             threadSummaries.push(gcDiff ? `- General comments: applied — ${gcDiff}` : `- General comments: no changes needed`);
           } catch {
             threadSummaries.push(`- General comments: processed`);
@@ -355,7 +359,7 @@ export async function runFetchAndFix(
         type: 'thread',
         thread,
       }, previousActions, branchHistory, prFiles);
-      const { output, exitCode } = await runClaudePhase(projectPath, model, prompt, taskId, q, getWindow, controller, 600000);
+      const { output, exitCode } = await runClaudePhase(projectPath, model, prompt, taskId, q, getWindow, controller, 600000, extraEnv);
 
       if (exitCode !== 0) {
         sendLog(q, getWindow, taskId, projectName, `Warning: Failed to fix ${threadLabel}. Continuing...`, 'error');
@@ -373,7 +377,7 @@ export async function runFetchAndFix(
       // Per-thread scope check: if this single fix touched too many files, revert it
       let threadReverted = false;
       try {
-        const threadDiff = (await execFileAsync('git', ['diff', '--shortstat'], projectPath, 10000)).trim();
+        const threadDiff = (await execFileAsync('git', ['diff', '--shortstat'], projectPath, 10000, false, extraEnv)).trim();
         const threadNums = threadDiff.match(/\d+/g)?.map(Number) || [];
         const threadFiles = threadNums[0] || 0;
         const threadLines = (threadNums[1] || 0) + (threadNums[2] || 0);
@@ -384,7 +388,7 @@ export async function runFetchAndFix(
             `Thread ${threadLabel}: EXCESSIVE scope (${threadFiles} files, ${threadLines} lines). Reverting this fix.`,
             'error'
           );
-          await execFileAsync('git', ['checkout', '.'], projectPath, 10000);
+          await execFileAsync('git', ['checkout', '.'], projectPath, 10000, false, extraEnv);
           threadReverted = true;
         }
       } catch { /* ignore — proceed without check */ }
@@ -430,7 +434,7 @@ export async function runFetchAndFix(
 3. If there are staged changes: git commit -m "${commitMsg}"
 4. If no changes: output "No changes to commit"
 Do NOT push yet.`;
-      await runClaudePhase(projectPath, model, commitPrompt, taskId, q, getWindow, controller, 60000);
+      await runClaudePhase(projectPath, model, commitPrompt, taskId, q, getWindow, controller, 60000, extraEnv);
 
       // Accumulate action for context in subsequent threads
       previousActions.push(`[${action.toUpperCase()}] ${threadLabel}: ${replyText.length > 200 ? replyText.substring(0, 200) + '...' : replyText}`);
@@ -450,7 +454,7 @@ Do NOT push yet.`;
     // 1. Check diff size — compare against rollback tag
     let diffExploded = false;
     try {
-      const diffStat = (await execFileAsync('git', ['diff', '--shortstat', rollbackTag], projectPath, 10000)).trim();
+      const diffStat = (await execFileAsync('git', ['diff', '--shortstat', rollbackTag], projectPath, 10000, false, extraEnv)).trim();
       const nums = diffStat.match(/\d+/g)?.map(Number) || [];
       const filesChanged = nums[0] || 0;
       const totalLines = (nums[1] || 0) + (nums[2] || 0);
@@ -475,7 +479,7 @@ Do NOT push yet.`;
     if (diffExploded) {
       sendLog(q, getWindow, taskId, projectName, `ROLLING BACK to ${rollbackTag} — fixes caused more harm than good.`, 'error');
       try {
-        await execFileAsync('git', ['reset', '--hard', rollbackTag], projectPath, 15000);
+        await execFileAsync('git', ['reset', '--hard', rollbackTag], projectPath, 15000, false, extraEnv);
         sendLog(q, getWindow, taskId, projectName, `Rollback successful. Branch restored to pre-fix state.`, 'ok');
       } catch (err) {
         sendLog(q, getWindow, taskId, projectName, `Rollback failed: ${(err as Error).message}. Manual intervention needed.`, 'error');
@@ -526,7 +530,7 @@ ${testResult.output}
 
 Fix the test failures and ensure all tests pass. Only modify test files or the minimal code needed to fix the failures.`;
 
-        await runClaudePhase(projectPath, model, fixPrompt, taskId, q, getWindow, controller, 600000);
+        await runClaudePhase(projectPath, model, fixPrompt, taskId, q, getWindow, controller, 600000, extraEnv);
 
         // Re-run native tests
         const retryResult = await runNativeTests(projectPath, testCmd, taskId, projectName, q, getWindow, testTimeoutMs);
@@ -579,7 +583,7 @@ Test output (last 3000 chars):
 ${latestTestResult.output}
 
 Fix the test failures and ensure all tests pass.`;
-          await runClaudePhase(projectPath, model, retryFixPrompt, taskId, q, getWindow, controller, 600000);
+          await runClaudePhase(projectPath, model, retryFixPrompt, taskId, q, getWindow, controller, 600000, extraEnv);
 
           const postFixResult = await runNativeTests(projectPath, testCmd, taskId, projectName, q, getWindow, testTimeoutMs);
           if (postFixResult.pass || postFixResult.timedOut) {
@@ -648,8 +652,8 @@ Fix the test failures and ensure all tests pass.`;
       } else if (decision.action === 'reject') {
         sendLog(q, getWindow, taskId, projectName, 'Push rejected by user. Discarding local changes.', 'info');
         try {
-          await execFileAsync('git', ['checkout', '.'], projectPath, 10000);
-          await execFileAsync('git', ['clean', '-fd'], projectPath, 10000);
+          await execFileAsync('git', ['checkout', '.'], projectPath, 10000, false, extraEnv);
+          await execFileAsync('git', ['clean', '-fd'], projectPath, 10000, false, extraEnv);
         } catch { /* ignore */ }
         q.updateTaskStatus.run('pr_feedback', taskId);
         sendPhaseUpdate(getWindow, { taskId, phase: 5, phaseLabel: 'pr_feedback', status: 'completed' });
@@ -680,12 +684,12 @@ Fix the test failures and ensure all tests pass.`;
     // ── Post replies and resolve threads (deferred until user approved) ──
     if (deferredReplies.length > 0) {
       sendLog(q, getWindow, taskId, projectName, `Posting ${deferredReplies.length} reply(s) on PR threads...`, 'info');
-      await postThreadReplies(projectPath, deferredReplies, taskId, projectName, q, getWindow);
+      await postThreadReplies(projectPath, deferredReplies, taskId, projectName, q, getWindow, extraEnv);
     }
     if (deferredResolveIds.length > 0) {
       sendLog(q, getWindow, taskId, projectName, `Resolving ${deferredResolveIds.length} thread(s) on GitHub...`, 'info');
       const uniqueIds = [...new Set(deferredResolveIds)];
-      await resolveReviewThreads(projectPath, uniqueIds, taskId, projectName, q, getWindow);
+      await resolveReviewThreads(projectPath, uniqueIds, taskId, projectName, q, getWindow, extraEnv);
     }
 
     // Squash all per-thread commits into one clean commit, then push
@@ -703,11 +707,11 @@ Fix the test failures and ensure all tests pass.`;
 3. If count is 1: git commit --amend -m "${squashMsg}"
 4. If count is 0: output "No commits to squash"
 5. git push --force-with-lease`;
-    await runClaudePhase(projectPath, model, squashAndPushPrompt, taskId, q, getWindow, controller, 120000);
+    await runClaudePhase(projectPath, model, squashAndPushPrompt, taskId, q, getWindow, controller, 120000, extraEnv);
 
     // Minimize current cycle reviews + delete old cycle reviews
-    await minimizeOldReviews(projectPath, task.pr_number as number, taskId, projectName, q, getWindow);
-    await cleanupOldPRComments(projectPath, task.pr_number as number, taskId, projectName, q, getWindow);
+    await minimizeOldReviews(projectPath, task.pr_number as number, taskId, projectName, q, getWindow, extraEnv);
+    await cleanupOldPRComments(projectPath, task.pr_number as number, taskId, projectName, q, getWindow, 2, extraEnv);
 
     // Increment review cycle
     q.updateTask.run(
@@ -752,17 +756,20 @@ export async function runFetchAndFixPushOnly(
     const projectName = task.project_name;
     const model = task.model;
 
+    // Resolve code hosting env vars for subprocess calls
+    const extraEnv = resolveEnvVars(task.project_id, _db);
+
     // Resolve all unresolved threads before pushing (deferred data was lost)
     sendPhaseUpdate(getWindow, {
       taskId, phase: 5, phaseLabel: 'pr_fixing', status: 'in_progress',
       subProgress: { current: 1, total: 3, label: 'Threads', step: 'Resolving threads' },
     });
     try {
-      const feedback = await fetchUnresolvedPrFeedback(projectPath, task.pr_number as number, taskId, projectName, q, getWindow);
+      const feedback = await fetchUnresolvedPrFeedback(projectPath, task.pr_number as number, taskId, projectName, q, getWindow, extraEnv);
       if (feedback.threads.length > 0) {
         const threadIds = feedback.threads.map(t => t.id);
         sendLog(q, getWindow, taskId, projectName, `Resolving ${threadIds.length} unresolved thread(s) on GitHub...`, 'info');
-        await resolveReviewThreads(projectPath, threadIds, taskId, projectName, q, getWindow);
+        await resolveReviewThreads(projectPath, threadIds, taskId, projectName, q, getWindow, extraEnv);
       } else {
         sendLog(q, getWindow, taskId, projectName, 'No unresolved threads to resolve.', 'info');
       }
@@ -784,15 +791,15 @@ export async function runFetchAndFixPushOnly(
 3. If count is 1: git commit --amend -m "${squashMsg}"
 4. If count is 0: git add -A && git commit -m "${squashMsg}" (stage any uncommitted changes)
 5. git push --force-with-lease`;
-    await runClaudePhase(projectPath, model, squashAndPushPrompt, taskId, q, getWindow, controller, 120000);
+    await runClaudePhase(projectPath, model, squashAndPushPrompt, taskId, q, getWindow, controller, 120000, extraEnv);
 
     // Cleanup old reviews
     sendPhaseUpdate(getWindow, {
       taskId, phase: 5, phaseLabel: 'pr_fixing', status: 'in_progress',
       subProgress: { current: 3, total: 3, label: 'Cleanup', step: 'Minimizing old reviews' },
     });
-    await minimizeOldReviews(projectPath, task.pr_number as number, taskId, projectName, q, getWindow);
-    await cleanupOldPRComments(projectPath, task.pr_number as number, taskId, projectName, q, getWindow);
+    await minimizeOldReviews(projectPath, task.pr_number as number, taskId, projectName, q, getWindow, extraEnv);
+    await cleanupOldPRComments(projectPath, task.pr_number as number, taskId, projectName, q, getWindow, 2, extraEnv);
 
     q.updateTask.run(
       task.title, task.description, task.acceptance_criteria, task.images,

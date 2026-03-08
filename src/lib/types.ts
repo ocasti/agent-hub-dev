@@ -1,3 +1,14 @@
+export interface CodeHostingProjectConfig {
+  /** Override token for this project */
+  token?: string;
+  /** Override git author name */
+  authorName?: string;
+  /** Override git author email */
+  authorEmail?: string;
+  /** Override default branch */
+  defaultBranch?: string;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -7,6 +18,7 @@ export interface Project {
   optionalSkills: string[];
   testCommand: string;
   codeHosting?: string;
+  codeHostingConfig?: CodeHostingProjectConfig;
   pluginPm?: string;
   pluginPmConfig?: Record<string, string>;
   createdAt: string;
@@ -319,6 +331,7 @@ export interface ProjectRow {
   optional_skills: string;
   test_command: string;
   code_hosting: string | null;
+  code_hosting_config: string;
   plugin_pm: string | null;
   plugin_pm_config: string;
   created_at: string;
