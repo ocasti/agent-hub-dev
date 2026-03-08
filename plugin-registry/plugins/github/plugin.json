@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "author": "Agent Hub",
   "description": "Git operations, pull requests, and code review via GitHub CLI",
-  "homepage": "https://cli.github.com",
+  "homepage": "https://github.com/ocasti/agent-hub-dev/blob/main/plugin-registry/plugins/github/README.md",
   "license": "MIT",
   "capabilities": ["ship", "pr_feedback"],
   "level": 2,

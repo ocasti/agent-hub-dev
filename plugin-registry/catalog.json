@@ -19,9 +19,9 @@
     ],
     "category": "Code Hosting",
     "downloadUrl": "https://github.com/ocasti/agent-hub-dev/releases/latest/download/github.tar.gz",
-    "homepage": "https://cli.github.com",
+    "homepage": "https://github.com/ocasti/agent-hub-dev/blob/main/plugin-registry/plugins/github/README.md",
     "license": "MIT",
-    "updatedAt": "2026-03-08T00:38:53.407Z",
+    "updatedAt": "2026-03-08T00:53:48.450Z",
     "configSchema": [
       {
         "key": "defaultBranch",

@@ -12,7 +12,7 @@
     "tags": ["code-hosting", "git", "pull-requests"],
     "category": "Code Hosting",
     "downloadUrl": "https://github.com/ocasti/agent-hub-dev/releases/latest/download/github.tar.gz",
-    "homepage": "https://cli.github.com",
+    "homepage": "https://github.com/ocasti/agent-hub-dev/blob/main/plugin-registry/plugins/github/README.md",
     "license": "MIT",
     "configSchema": [
       {
