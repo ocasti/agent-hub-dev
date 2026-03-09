@@ -1,9 +1,16 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { Settings, HealthStatus, LicenseLimits, TierName } from '../lib/types';
+import type { Settings, HealthStatus, LicenseLimits, TierName, NotificationsConfig, NotificationKey } from '../lib/types';
 import { CORE_SKILLS } from '../lib/skills';
 import * as ipc from '../lib/ipc';
 import { IconSun, IconMoon, IconLock, IconTrash } from './ui/Icons';
+
+const NOTIFICATION_KEYS: NotificationKey[] = [
+  'spec_needs_input', 'plan_ready', 'quality_pass', 'quality_fail',
+  'pr_created', 'pr_changes_requested', 'push_review', 'task_complete',
+  'pr_fix_pushed', 'workflow_failed', 'workflow_aborted',
+  'regression_detected', 'max_review_loops', 'tests_failing',
+];
 
 interface SettingsViewProps {
   settings: Settings;
@@ -23,10 +30,17 @@ export default function SettingsView({ settings, onUpdate, licensePlan = 'free',
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshDone, setRefreshDone] = useState(false);
+  const [notifConfig, setNotifConfig] = useState<NotificationsConfig | null>(null);
 
   useEffect(() => {
     ipc.healthCheck().then(setHealth).catch(() => {});
+    ipc.getNotificationsConfig().then(setNotifConfig).catch(() => {});
   }, []);
+
+  const updateNotifConfig = (updated: NotificationsConfig) => {
+    setNotifConfig(updated);
+    ipc.updateNotificationsConfig(updated).catch(() => {});
+  };
 
   const handleLogout = async () => {
     setDeactivating(true);
@@ -197,6 +211,46 @@ export default function SettingsView({ settings, onUpdate, licensePlan = 'free',
           </button>
         </div>
       </div>
+
+      {/* Notifications */}
+      {notifConfig && (
+        <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('notifications.sectionTitle')}</h4>
+              <p className="text-xs text-gray-400 mt-0.5">{t('notifications.description')}</p>
+            </div>
+            <button
+              onClick={() => updateNotifConfig({ ...notifConfig, enabled: !notifConfig.enabled })}
+              className={`relative inline-flex items-center w-11 h-6 rounded-full transition-colors ${
+                notifConfig.enabled ? 'bg-indigo-600' : 'bg-gray-300 dark:bg-gray-600'
+              }`}
+            >
+              <span className={`inline-block w-4 h-4 bg-white rounded-full transition-transform shadow ${
+                notifConfig.enabled ? 'translate-x-6' : 'translate-x-1'
+              }`} />
+            </button>
+          </div>
+          {notifConfig.enabled && (
+            <div className="grid grid-cols-2 gap-2 pt-2">
+              {NOTIFICATION_KEYS.map((key) => (
+                <label key={key} className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={notifConfig.keys[key]}
+                    onChange={() => updateNotifConfig({
+                      ...notifConfig,
+                      keys: { ...notifConfig.keys, [key]: !notifConfig.keys[key] },
+                    })}
+                    className="w-3.5 h-3.5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  {t(`notifications.${key}`)}
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-6 space-y-5">
         {/* Theme + Language row */}

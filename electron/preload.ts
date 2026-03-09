@@ -182,6 +182,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('plugins:compatibility-warning', handler);
   },
 
+  // Notifications
+  getNotificationsConfig: () => ipcRenderer.invoke('notifications:getConfig'),
+  updateNotificationsConfig: (config: unknown) => ipcRenderer.invoke('notifications:updateConfig', config),
+
   // Dialog
   selectFolder: () => ipcRenderer.invoke('dialog:selectFolder'),
   selectImages: () => ipcRenderer.invoke('dialog:selectImages'),

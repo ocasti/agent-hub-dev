@@ -12,6 +12,7 @@ import { prepareGitBranch, commitWipIfDirty } from './git-ops';
 import { fireHook, hasCodeHostingPlugin } from '../plugins/engine';
 import type { HookContext } from '../plugins/types';
 import { canUseModel, getEffectiveMaxReviewLoops } from '../license';
+import { sendNotification } from '../notifications';
 import { resolveEnvVars, getProjectAdapter } from './adapters/registry';
 
 // ── SDD Workflow Orchestrator ──────────────────────────────────────────────────
@@ -161,6 +162,7 @@ export async function orchestrateSddWorkflow(
           specSuggestions: suggestions,
         });
         sendLog(q, getWindow, taskId, projectName, `Spec incomplete — ${suggestions.length} suggestion(s). Waiting for user input.`, 'info');
+        sendNotification('spec_needs_input', 'Spec needs refinement', `${task.title} — ${suggestions.length} suggestion(s). Review and refine your specification.`);
         await fireHook('on:spec_needs_input', { ...hookCtx, phase: 0, phaseLabel: 'spec_feedback', specSuggestions: suggestions }, db);
 
         // Wait for user to continue
@@ -236,6 +238,7 @@ export async function orchestrateSddWorkflow(
         planSummary,
       });
       sendLog(q, getWindow, taskId, projectName, 'Plan ready — waiting for user approval before implementing.', 'info');
+      sendNotification('plan_ready', 'Plan ready for review', `${task.title} — Review and approve the plan before implementation begins.`);
       await fireHook('on:plan_ready', { ...hookCtx, phase: 1, phaseLabel: 'plan_review', planSummary }, db);
 
       // Wait for user to approve or request re-plan
@@ -332,7 +335,9 @@ export async function orchestrateSddWorkflow(
           passed = true;
           sendPhaseUpdate(getWindow, { taskId, phase: 3, phaseLabel: 'reviewing', status: 'completed', reviewLoop });
           sendLog(q, getWindow, taskId, projectName, 'Quality Gate PASSED', 'ok');
+          sendNotification('quality_pass', 'Quality gate passed!', `${task.title} — Code review complete after ${reviewLoop + 1} loop(s).`);
         } else {
+          sendNotification('quality_fail', 'Code review found issues', `${task.title} — ${(parsed.issues || []).length} issue(s) found. Attempting fixes...`);
           await fireHook('on:quality_fail', { ...hookCtx, phase: 3, phaseLabel: 'reviewing', reviewLoop, extra: { issues: parsed.issues } }, db);
           reviewLoop++;
           if (reviewLoop < maxReviewLoops) {
@@ -354,6 +359,7 @@ export async function orchestrateSddWorkflow(
             sendPhaseUpdate(getWindow, { taskId, phase: 3, phaseLabel: 'fixing', status: 'completed', reviewLoop });
           } else {
             sendLog(q, getWindow, taskId, projectName, `Max review loops reached (${reviewLoop}/${maxReviewLoops}). Proceeding to Ship.`, 'info');
+            sendNotification('max_review_loops', 'Max review loops reached', `${task.title} — Quality gate could not pass after ${reviewLoop} attempts. Proceeding anyway.`);
             await fireHook('on:quality_max_loops', { ...hookCtx, phase: 3, phaseLabel: 'reviewing', reviewLoop }, db);
             sendPhaseUpdate(getWindow, { taskId, phase: 3, phaseLabel: 'reviewing', status: 'completed', reviewLoop });
           }
@@ -420,6 +426,7 @@ export async function orchestrateSddWorkflow(
         `Ship complete. PR #${parsed.prNumber || '?'} on branch ${parsed.branchName || '?'}. Waiting for human review.`,
         'ok'
       );
+      sendNotification('pr_created', 'Pull request created!', `${task.title} — PR #${parsed.prNumber || '?'} on ${parsed.branchName || '?'}. Awaiting review.`);
       await fireHook('on:pr_created', { ...hookCtx, phase: 4, phaseLabel: 'shipping', prNumber: parsed.prNumber || undefined, branchName: parsed.branchName || undefined }, db);
     }
 
@@ -433,6 +440,7 @@ export async function orchestrateSddWorkflow(
       q.updateTaskStatus.run('completed', taskId);
       sendPhaseUpdate(getWindow, { taskId, phase: 3, phaseLabel: 'completed', status: 'completed' });
       sendLog(q, getWindow, taskId, projectName, 'SDD Workflow completed (no code-hosting plugin — git/PR handled manually).', 'ok');
+      sendNotification('task_complete', 'Task completed!', `${task.title} — Development complete. Code is ready.`);
       await fireHook('on:task_complete', { ...hookCtx, phase: 3 }, db);
     }
 
@@ -440,12 +448,14 @@ export async function orchestrateSddWorkflow(
     activeControllers.delete(taskId);
     if ((err as Error).name === 'AbortError') {
       sendLog(q, getWindow, taskId, '', 'Workflow aborted', 'info');
+      sendNotification('workflow_aborted', 'Task stopped', `${taskTitle || 'Task'} — Workflow stopped by user.`);
       fireHook('on:workflow_aborted', { taskId, projectId: taskProjectId, projectPath: taskProjectPath, taskTitle }, db).catch(() => {});
       return;
     }
     q.updateTaskStatus.run('failed', taskId);
     sendLog(q, getWindow, taskId, '', `Workflow failed: ${(err as Error).message}`, 'error');
     sendPhaseUpdate(getWindow, { taskId, phase: -1, phaseLabel: 'failed', status: 'failed' });
+    sendNotification('workflow_failed', 'Task failed', `${taskTitle || 'Task'} — ${(err as Error).message}`);
     fireHook('on:workflow_failed', { taskId, projectId: taskProjectId, projectPath: taskProjectPath, taskTitle, error: (err as Error).message }, db).catch(() => {});
   }
 }

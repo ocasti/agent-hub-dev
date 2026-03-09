@@ -12,6 +12,7 @@ import { execGraphQL } from './claude-cli';
 import { fireHook } from '../plugins/engine';
 import type { HookContext } from '../plugins/types';
 import { resolveEnvVars } from './adapters/registry';
+import { sendNotification } from '../notifications';
 
 // ── Fetch & Fix (PR Feedback → re-run phases 2-4) ─────────────────────────────
 
@@ -193,6 +194,7 @@ export async function runFetchAndFix(
 
           if (rollbackReason) {
             sendLog(q, getWindow, taskId, projectName, `REGRESSION DETECTED: ${rollbackReason} Rolling back.`, 'error');
+            sendNotification('regression_detected', 'Regression detected — rolling back', `${task.title} — ${rollbackReason}`);
 
             try {
               await execFileAsync('git', ['reset', '--hard', prevTag], projectPath, 15000, false, extraEnv);
@@ -277,6 +279,7 @@ export async function runFetchAndFix(
     }
 
     sendLog(q, getWindow, taskId, projectName, `Found ${feedback.threads.length} unresolved review thread(s). Processing one by one...`, 'info');
+    sendNotification('pr_changes_requested', 'PR review feedback received', `${task.title} — ${feedback.threads.length} comment thread(s) to address.`);
     await fireHook('on:pr_changes_requested', { ...hookCtx, phase: 5, phaseLabel: 'pr_fixing', commentCount: feedback.threads.length }, db);
 
     let accepted = 0;
@@ -549,6 +552,7 @@ Fix the test failures and ensure all tests pass. Only modify test files or the m
       if (!fixed) {
         // Max retries exhausted — pause in test_fixing state
         sendLog(q, getWindow, taskId, projectName, `Post-fix validation: Tests still failing after ${maxTestFixRetries} fix attempts. Pausing for manual intervention.`, 'error');
+        sendNotification('tests_failing', 'Tests still failing', `${task.title} — After ${maxTestFixRetries} fix attempts, tests still failing. Manual intervention needed.`);
         q.updateTaskStatus.run('test_fixing', taskId);
         sendPhaseUpdate(getWindow, { taskId, phase: 5, phaseLabel: 'test_fixing', status: 'paused' });
 
@@ -628,6 +632,7 @@ Fix the test failures and ensure all tests pass.`;
     ].join('\n');
 
     // Pause and wait for user approval
+    sendNotification('push_review', 'Ready to push fixes', `${task.title} — ${accepted} accepted, ${rejected} rejected. Review before pushing.`);
     q.updateTaskStatus.run('push_review', taskId);
     // Store summary in plan_summary field temporarily for UI display
     q.updateTask.run(
@@ -725,6 +730,7 @@ Fix the test failures and ensure all tests pass.`;
       `Fetch & Fix complete (cycle ${newCycleNum}). ${accepted} accepted, ${rejected} rejected with justification. Waiting for human review.`,
       'ok'
     );
+    sendNotification('pr_fix_pushed', `Fixes pushed (cycle ${newCycleNum})`, `${task.title} — ${accepted} accepted, ${rejected} rejected. Awaiting next review.`);
     await fireHook('on:pr_fix_pushed', { ...hookCtx, phase: 5, phaseLabel: 'pr_feedback', prNumber: task.pr_number || undefined, reviewLoop: newCycleNum }, db);
     activeControllers.delete(taskId);
 

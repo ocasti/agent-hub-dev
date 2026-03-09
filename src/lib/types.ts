@@ -185,6 +185,27 @@ export interface Settings {
   updateSkippedVersion?: string;
 }
 
+export type NotificationKey =
+  | 'spec_needs_input'
+  | 'plan_ready'
+  | 'quality_pass'
+  | 'quality_fail'
+  | 'pr_created'
+  | 'pr_changes_requested'
+  | 'push_review'
+  | 'task_complete'
+  | 'pr_fix_pushed'
+  | 'workflow_failed'
+  | 'workflow_aborted'
+  | 'regression_detected'
+  | 'max_review_loops'
+  | 'tests_failing';
+
+export interface NotificationsConfig {
+  enabled: boolean;
+  keys: Record<NotificationKey, boolean>;
+}
+
 export interface HealthStatus {
   claudeInstalled: boolean;
   claudeVersion?: string;
@@ -505,6 +526,10 @@ export interface ElectronAPI {
   getGitRemote: (folderPath: string) => Promise<string | null>;
   openExternal: (url: string) => Promise<void>;
   getPremiumUrl: () => Promise<string>;
+
+  // Notifications
+  getNotificationsConfig: () => Promise<NotificationsConfig>;
+  updateNotificationsConfig: (config: NotificationsConfig) => Promise<void>;
 
   onMenuNavigate: (callback: (route: string) => void) => () => void;
   onShowAbout: (callback: () => void) => () => void;

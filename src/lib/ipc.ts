@@ -16,6 +16,7 @@ import type {
   PluginCompatResult,
   PmWorkItem,
   PluginTaskField,
+  NotificationsConfig,
 } from './types';
 
 const api = () => window.electronAPI;
@@ -179,6 +180,10 @@ export const checkPluginCompatibility = (): Promise<PluginCompatResult[]> =>
   api().checkPluginCompatibility();
 export const onPluginCompatWarning = (cb: (results: PluginCompatResult[]) => void): (() => void) =>
   api().onPluginCompatWarning(cb);
+
+// ── Notifications ──
+export const getNotificationsConfig = (): Promise<NotificationsConfig> => api().getNotificationsConfig();
+export const updateNotificationsConfig = (config: NotificationsConfig): Promise<void> => api().updateNotificationsConfig(config);
 
 // ── Dialog ──
 export const selectFolder = (): Promise<string | null> => api().selectFolder();
