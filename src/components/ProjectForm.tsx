@@ -358,7 +358,11 @@ export default function ProjectForm({ project, onSave, onCancel, licensePlan = '
                       {installedAgents.map((a) => (
                         <option key={a.id} value={a.id}>{a.name}</option>
                       ))}
-                      {installedAgents.length === 0 && <option value="claude">Claude</option>}
+                      {/* Keep configured agent visible even if not in installedAgents list yet */}
+                      {primaryAgent && installedAgents.length > 0 && !installedAgents.some((a) => a.id === primaryAgent) && (
+                        <option value={primaryAgent}>{primaryAgent}</option>
+                      )}
+                      {installedAgents.length === 0 && <option value={primaryAgent}>{primaryAgent}</option>}
                     </select>
                     <select
                       value={fallbackAgent}
@@ -374,6 +378,10 @@ export default function ProjectForm({ project, onSave, onCancel, licensePlan = '
                       {installedAgents.filter((a) => a.id !== primaryAgent).map((a) => (
                         <option key={a.id} value={a.id}>{a.name}</option>
                       ))}
+                      {/* Keep configured fallback visible even if not in installedAgents list */}
+                      {fallbackAgent && installedAgents.length > 0 && !installedAgents.some((a) => a.id === fallbackAgent) && (
+                        <option value={fallbackAgent}>{fallbackAgent}</option>
+                      )}
                     </select>
                   </div>
                 </div>
