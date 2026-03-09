@@ -48,6 +48,7 @@ export function registerUpdateHandlers(
   // ── Forward autoUpdater events to renderer ───────────────────────────────────
 
   autoUpdater.on('update-available', (info) => {
+    console.log('[updater] update-available event:', info.version);
     const skipped = getSetting('update_skipped_version');
     // Only skip if the skipped version matches exactly; if a newer version
     // is available, clear the skipped flag and show the alert
@@ -76,7 +77,8 @@ export function registerUpdateHandlers(
     });
   });
 
-  autoUpdater.on('update-not-available', () => {
+  autoUpdater.on('update-not-available', (info) => {
+    console.log('[updater] update-not-available event:', info.version);
     getWindow()?.webContents.send('update:not-available');
   });
 
@@ -90,6 +92,7 @@ export function registerUpdateHandlers(
   });
 
   autoUpdater.on('update-downloaded', (info) => {
+    console.log('[updater] update-downloaded event:', info.version);
     getWindow()?.webContents.send('update:downloaded', {
       version: info.version,
       releaseDate: info.releaseDate || new Date().toISOString(),
@@ -107,7 +110,15 @@ export function registerUpdateHandlers(
 
   ipcMain.handle('update:check', async () => {
     setSetting('update_last_check', new Date().toISOString());
-    await autoUpdater.checkForUpdates();
+    try {
+      const result = await autoUpdater.checkForUpdates();
+      console.log('[updater] checkForUpdates result:', result?.updateInfo?.version, result?.updateInfo?.files?.length, 'files');
+      return { version: result?.updateInfo?.version || null };
+    } catch (err) {
+      console.error('[updater] checkForUpdates error:', err);
+      getWindow()?.webContents.send('update:error', (err as Error).message);
+      return { error: (err as Error).message };
+    }
   });
 
   ipcMain.handle('update:download', async () => {
