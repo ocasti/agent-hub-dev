@@ -9,6 +9,19 @@ import { satisfies } from 'semver';
 import type { ConfigField, InstalledPlugin, PluginManifest, PluginSetup, CatalogPlugin } from './types';
 import { getInstalledPlugins, saveInstalledPlugins, loadPluginManifest, loadPluginWorkflow } from './loader';
 
+/**
+ * Resolve the path to a bundled plugin directory.
+ * In packaged builds, asarUnpack places files under app.asar.unpacked/.
+ */
+function getBundledPluginDir(pluginId: string): string {
+  const appPath = app.getAppPath();
+  // In packaged app, appPath ends with "app.asar" — use the unpacked sibling
+  const base = appPath.endsWith('.asar')
+    ? appPath + '.unpacked'
+    : appPath;
+  return join(base, 'plugin-registry', 'plugins', pluginId);
+}
+
 // ── A1: Command Execution Whitelist ──────────────────────────────────────────────
 
 const ALLOWED_COMMAND_PREFIXES = [
@@ -297,7 +310,7 @@ export async function installBundledPlugin(
   pluginId: string,
   config: Record<string, string>
 ): Promise<void> {
-  const bundledDir = join(app.getAppPath(), 'plugin-registry', 'plugins', pluginId);
+  const bundledDir = getBundledPluginDir(pluginId);
   if (!existsSync(bundledDir)) {
     throw new Error(`Bundled plugin "${pluginId}" not found`);
   }

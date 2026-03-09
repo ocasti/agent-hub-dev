@@ -182,7 +182,9 @@ export function registerPluginHandlers(ipcMain: IpcMain, db: Database.Database) 
     }
 
     // Try bundled install first (for official plugins shipped with the app)
-    const bundledDir = join(app.getAppPath(), 'plugin-registry', 'plugins', entry.id);
+    const appPath = app.getAppPath();
+    const base = appPath.endsWith('.asar') ? appPath + '.unpacked' : appPath;
+    const bundledDir = join(base, 'plugin-registry', 'plugins', entry.id);
     if (existsSync(bundledDir)) {
       await installBundledPlugin(entry.id, config);
     } else {
