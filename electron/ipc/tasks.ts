@@ -201,6 +201,7 @@ export function registerTaskHandlers(ipcMain: IpcMain, db: Database.Database) {
       postFixFilesPerComment: parseInt(settings.postfix_files_per_comment as string) || 3,
       testTimeoutMin: parseInt(settings.test_timeout_min as string) || 5,
       testFixRetries: parseInt(settings.test_fix_retries as string) || 3,
+      maxParallelPerProject: parseInt(settings.max_parallel_per_project as string) || 3,
       // License
       licenseKey: (settings.license_key as string) || '',
       licenseStatus: (settings.license_status as string) || 'free',
@@ -216,7 +217,7 @@ export function registerTaskHandlers(ipcMain: IpcMain, db: Database.Database) {
   });
 
   const ALLOWED_SETTINGS_KEYS = new Set([
-    'max_concurrent', 'default_model', 'max_review_loops', 'theme', 'locale',
+    'max_concurrent', 'max_parallel_per_project', 'default_model', 'max_review_loops', 'theme', 'locale',
     'thread_max_files', 'thread_max_lines', 'postfix_lines_per_comment',
     'postfix_files_per_comment', 'test_timeout_min', 'test_fix_retries',
     'branchCounter',

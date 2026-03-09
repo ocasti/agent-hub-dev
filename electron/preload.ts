@@ -186,6 +186,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getNotificationsConfig: () => ipcRenderer.invoke('notifications:getConfig'),
   updateNotificationsConfig: (config: unknown) => ipcRenderer.invoke('notifications:updateConfig', config),
 
+  // Worktrees
+  listWorktrees: () => ipcRenderer.invoke('worktree:list'),
+  detectWorktreeConflicts: (projectId: string) => ipcRenderer.invoke('worktree:detectConflicts', projectId),
+  mergeWorktreeBranch: (taskId: string) => ipcRenderer.invoke('worktree:merge', taskId),
+  removeWorktreeForTask: (taskId: string) => ipcRenderer.invoke('worktree:remove', taskId),
+
   // App info
   getAppVersion: () => ipcRenderer.invoke('app:getVersion'),
 

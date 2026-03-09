@@ -17,6 +17,8 @@ import type {
   PmWorkItem,
   PluginTaskField,
   NotificationsConfig,
+  WorktreeInfo,
+  ConflictFile,
 } from './types';
 
 const api = () => window.electronAPI;
@@ -184,6 +186,15 @@ export const onPluginCompatWarning = (cb: (results: PluginCompatResult[]) => voi
 // ── Notifications ──
 export const getNotificationsConfig = (): Promise<NotificationsConfig> => api().getNotificationsConfig();
 export const updateNotificationsConfig = (config: NotificationsConfig): Promise<void> => api().updateNotificationsConfig(config);
+
+// ── Worktrees ──
+export const listWorktrees = (): Promise<WorktreeInfo[]> => api().listWorktrees();
+export const detectWorktreeConflicts = (projectId: string): Promise<ConflictFile[]> =>
+  api().detectWorktreeConflicts(projectId);
+export const mergeWorktreeBranch = (taskId: string): Promise<{ success: boolean; message: string }> =>
+  api().mergeWorktreeBranch(taskId);
+export const removeWorktreeForTask = (taskId: string): Promise<void> =>
+  api().removeWorktreeForTask(taskId);
 
 // ── App info ──
 export const getAppVersion = (): Promise<string> => api().getAppVersion();

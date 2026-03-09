@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.4.0] — 2026-03-09 — Worktrees V2: Conflict Detection, Symlinks & Dashboard
+
+### Added
+- **Conflict detection**: `detectWorktreeConflicts()` analyzes files modified in active worktree branches to detect potential overlaps before starting a new task
+- **Symlink node_modules**: `setupWorktreeDepsWithSymlink()` tries symlinking node_modules from the main project before falling back to full install, saving ~500MB+ per worktree
+- **Merge worktree branches**: Manual "Merge" action from Dashboard to integrate completed branches into the default branch with conflict detection
+- **Worktree Dashboard**: Visual table showing all active worktrees with task name, project, branch, status, disk usage, and actions (Merge/Remove)
+- **Configurable max_parallel_per_project**: Premium users can now configure the per-project parallel limit in Settings (1-3)
+- **Worktree IPC handlers**: `worktree:list`, `worktree:detectConflicts`, `worktree:merge`, `worktree:remove`
+
+### Changed
+- Orchestrator uses `setupWorktreeDepsWithSymlink` instead of `setupWorktreeDeps` for disk-efficient dependency installation
+- `getMaxParallelPerProject()` now respects user-configured setting (capped at tier max)
+- Settings grid changed from 3-column to 4-column to accommodate "Parallel / Project" field
+
+### Fixed
+- Strip HTML from release notes in update alerts (backend + frontend)
+- Skip version logic uses semver comparison — skipping v1.3.1 won't block v1.3.2+
+- Download button shows immediate progress feedback; errors displayed in Dashboard
+- Added electron-updater logging for diagnostics
+
+---
+
 ## [1.1.0] — 2026-03-08 — Code Hosting Adapter System
 
 ### Added

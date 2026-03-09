@@ -17,13 +17,14 @@ interface SettingsViewProps {
   onUpdate: (key: string, value: string) => void;
   onReloadSettings?: () => void;
   licensePlan?: TierName;
+  licenseLimits?: { max_parallel_per_project: number };
   onOpenLogin?: () => void;
   onLogout?: () => void;
   onUpgrade?: () => void;
   onRefreshAccount?: () => void;
 }
 
-export default function SettingsView({ settings, onUpdate, onReloadSettings, licensePlan = 'free', onOpenLogin, onLogout, onUpgrade, onRefreshAccount }: SettingsViewProps) {
+export default function SettingsView({ settings, onUpdate, onReloadSettings, licensePlan = 'free', licenseLimits, onOpenLogin, onLogout, onUpgrade, onRefreshAccount }: SettingsViewProps) {
   const { t } = useTranslation('settings');
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [logsCleared, setLogsCleared] = useState(false);
@@ -312,8 +313,8 @@ export default function SettingsView({ settings, onUpdate, onReloadSettings, lic
           </div>
         </div>
 
-        {/* Max Concurrent + Default Model + Review Loops row */}
-        <div className="grid grid-cols-3 gap-4">
+        {/* Max Concurrent + Parallel per Project + Default Model + Review Loops row */}
+        <div className="grid grid-cols-4 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
               {t('label.maxConcurrent')}
@@ -338,6 +339,32 @@ export default function SettingsView({ settings, onUpdate, onReloadSettings, lic
                 </span>
               </div>
             )}
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              {t('label.maxParallelPerProject', 'Parallel / Project')}
+              {licensePlan !== 'premium' && (
+                <IconLock className="w-3 h-3 inline ml-1 text-gray-400" />
+              )}
+            </label>
+            {licensePlan === 'premium' ? (
+              <input
+                type="number"
+                min={1}
+                max={licenseLimits?.max_parallel_per_project ?? 3}
+                value={settings.maxParallelPerProject ?? (licenseLimits?.max_parallel_per_project ?? 1)}
+                onChange={(e) => onUpdate('max_parallel_per_project', e.target.value)}
+                className="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            ) : (
+              <div className="w-full border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400 rounded-lg px-3 py-2 text-sm cursor-default">
+                1
+                <span className="text-xs text-gray-400 ml-2">
+                  ({t('auth.premiumForMore', 'Premium for more')})
+                </span>
+              </div>
+            )}
+            <p className="text-xs text-gray-400 mt-1">{t('maxParallelHelp', 'Max worktrees per project')}</p>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">

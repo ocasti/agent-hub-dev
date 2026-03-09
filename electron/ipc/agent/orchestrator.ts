@@ -9,7 +9,7 @@ import { readSettingSources } from '../skills';
 import { parsePhaseOutput, saveKnowledgeEntries } from './output-parser';
 import { buildPhasePrompt, buildFixPrompt } from './prompt-builder';
 import { prepareGitBranch, commitWipIfDirty } from './git-ops';
-import { createWorktree, setupWorktreeDeps, removeWorktree } from './worktree';
+import { createWorktree, setupWorktreeDepsWithSymlink, removeWorktree } from './worktree';
 import { fireHook, hasCodeHostingPlugin } from '../plugins/engine';
 import type { HookContext } from '../plugins/types';
 import { canUseModel, getEffectiveMaxReviewLoops, getMaxParallelPerProject } from '../license';
@@ -287,8 +287,8 @@ export async function orchestrateSddWorkflow(
         taskWorktreePath = wt.worktreePath;
         q.updateTaskWorktree.run(wt.worktreePath, taskId);
 
-        // Install dependencies in worktree
-        await setupWorktreeDeps(workDir, taskId, projectName, q, getWindow);
+        // Install dependencies in worktree (symlink node_modules when possible)
+        await setupWorktreeDepsWithSymlink(workDir, projectPath, taskId, projectName, q, getWindow);
 
         // Re-read CLAUDE.md from worktree
         projectDescription = readClaudeMd(workDir) || task.project_description || '';

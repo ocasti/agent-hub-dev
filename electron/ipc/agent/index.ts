@@ -14,6 +14,8 @@ import { orchestrateSddWorkflow } from './orchestrator';
 import { runFetchAndFix, runFetchAndFixPushOnly } from './pr-feedback';
 import { runTestFixLoop } from './test-runner';
 import { fireHook } from '../plugins/engine';
+import { listActiveWorktrees, detectWorktreeConflicts, mergeWorktreeBranch, removeWorktree } from './worktree';
+import { resolveEnvVars } from './adapters/registry';
 
 // ── Registration ───────────────────────────────────────────────────────────────
 
@@ -407,5 +409,33 @@ IMPORTANT: Output ONLY the acceptance criteria, one per line. No headings, no nu
     }
 
     return results;
+  });
+
+  // ── Worktree management ─────────────────────────────────────────────────────
+
+  ipcMain.handle('worktree:list', () => {
+    return listActiveWorktrees(db);
+  });
+
+  ipcMain.handle('worktree:detectConflicts', async (_event, projectId: string) => {
+    const project = db.prepare('SELECT path FROM projects WHERE id = ?').get(projectId) as { path: string } | undefined;
+    if (!project) return [];
+    const extraEnv = resolveEnvVars(projectId, db);
+    return detectWorktreeConflicts(project.path, projectId, db, extraEnv);
+  });
+
+  ipcMain.handle('worktree:merge', async (_event, taskId: string) => {
+    const task = q.getTask.get(taskId) as TaskRow | undefined;
+    if (!task || !task.branch_name) return { success: false, message: 'Task or branch not found' };
+    const extraEnv = resolveEnvVars(task.project_id, db);
+    return mergeWorktreeBranch(task.project_path, task.branch_name, extraEnv);
+  });
+
+  ipcMain.handle('worktree:remove', async (_event, taskId: string) => {
+    const task = q.getTask.get(taskId) as TaskRow | undefined;
+    if (!task || !task.worktree_path) return;
+    const extraEnv = resolveEnvVars(task.project_id, db);
+    await removeWorktree(task.project_path, task.worktree_path, extraEnv).catch(() => {});
+    q.updateTaskWorktree.run(null, taskId);
   });
 }

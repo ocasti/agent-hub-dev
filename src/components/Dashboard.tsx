@@ -1,5 +1,7 @@
+import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { Task, Log, Settings, ActiveAgent, UpdateInfo, UpdateProgress, PluginCompatResult } from '../lib/types';
+import type { Task, Log, Settings, ActiveAgent, UpdateInfo, UpdateProgress, PluginCompatResult, WorktreeInfo, LicenseLimits } from '../lib/types';
+import * as ipc from '../lib/ipc';
 import Badge from './ui/Badge';
 import ProgressBar from './ui/ProgressBar';
 import { IconRuler, IconPause, IconEdit, IconCheck, IconDownload, IconCircleCheck, IconPlay } from './ui/Icons';
@@ -29,6 +31,7 @@ interface DashboardProps {
   updateProgress?: UpdateProgress | null;
   updateDownloaded?: UpdateInfo | null;
   updateError?: string | null;
+  licenseLimits?: LicenseLimits;
   pluginCompatWarnings?: PluginCompatResult[];
   onDownloadUpdate?: () => void;
   onInstallUpdate?: () => void;
@@ -41,8 +44,44 @@ interface DashboardProps {
   onNavigateToTask: (task: Task) => void;
 }
 
-export default function Dashboard({ tasks, logs, settings, agents, updateAvailable, updateProgress, updateDownloaded, updateError, pluginCompatWarnings, onDownloadUpdate, onInstallUpdate, onSkipUpdate, onRefineSpec, onContinueSpec, onContinuePlan, onFetchAndFix, onApproveTask, onNavigateToTask }: DashboardProps) {
+export default function Dashboard({ tasks, logs, settings, agents, updateAvailable, updateProgress, updateDownloaded, updateError, licenseLimits, pluginCompatWarnings, onDownloadUpdate, onInstallUpdate, onSkipUpdate, onRefineSpec, onContinueSpec, onContinuePlan, onFetchAndFix, onApproveTask, onNavigateToTask }: DashboardProps) {
   const { t } = useTranslation(['dashboard', 'common', 'tasks']);
+  const [worktrees, setWorktrees] = useState<WorktreeInfo[]>([]);
+  const [merging, setMerging] = useState<string | null>(null);
+  const [mergeResult, setMergeResult] = useState<{ taskId: string; success: boolean; message: string } | null>(null);
+
+  const loadWorktrees = useCallback(() => {
+    ipc.listWorktrees().then(setWorktrees).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if ((licenseLimits?.max_parallel_per_project ?? 1) > 1) {
+      loadWorktrees();
+      const interval = setInterval(loadWorktrees, 10000);
+      return () => clearInterval(interval);
+    }
+  }, [licenseLimits, loadWorktrees]);
+
+  const handleMerge = useCallback(async (taskId: string) => {
+    setMerging(taskId);
+    setMergeResult(null);
+    try {
+      const result = await ipc.mergeWorktreeBranch(taskId);
+      setMergeResult({ taskId, ...result });
+      if (result.success) loadWorktrees();
+    } catch (err) {
+      setMergeResult({ taskId, success: false, message: (err as Error).message });
+    } finally {
+      setMerging(null);
+    }
+  }, [loadWorktrees]);
+
+  const handleRemoveWorktree = useCallback(async (taskId: string) => {
+    try {
+      await ipc.removeWorktreeForTask(taskId);
+      loadWorktrees();
+    } catch { /* */ }
+  }, [loadWorktrees]);
 
   const agentRunning = tasks.filter(
     (t) => !['queued', 'completed', 'failed', 'pr_feedback', 'spec_feedback', 'plan_review', 'push_review', 'test_fixing'].includes(t.status)
@@ -351,6 +390,74 @@ export default function Dashboard({ tasks, logs, settings, agents, updateAvailab
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Active Worktrees */}
+      {worktrees.length > 0 && (
+        <div className="space-y-3">
+          <h3 className="text-sm font-semibold text-cyan-700 dark:text-cyan-400 flex items-center gap-1.5">
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+            {t('section.worktrees', { count: worktrees.length, defaultValue: `Active Worktrees (${worktrees.length})` })}
+          </h3>
+          <div className="bg-white dark:bg-gray-800 border border-cyan-200 dark:border-cyan-800 rounded-xl overflow-hidden">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-gray-100 dark:border-gray-700 text-gray-500 dark:text-gray-400">
+                  <th className="text-left font-medium px-4 py-2">{t('worktree.task', 'Task')}</th>
+                  <th className="text-left font-medium px-4 py-2">{t('worktree.project', 'Project')}</th>
+                  <th className="text-left font-medium px-4 py-2">{t('worktree.branch', 'Branch')}</th>
+                  <th className="text-left font-medium px-4 py-2">{t('worktree.status', 'Status')}</th>
+                  <th className="text-right font-medium px-4 py-2">{t('worktree.disk', 'Disk')}</th>
+                  <th className="text-right font-medium px-4 py-2">{t('worktree.actions', 'Actions')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {worktrees.map((wt) => (
+                  <tr key={wt.taskId} className="border-b border-gray-50 dark:border-gray-700/50 last:border-0">
+                    <td className="px-4 py-2.5 font-medium text-gray-800 dark:text-gray-200 max-w-[200px] truncate">{wt.taskTitle}</td>
+                    <td className="px-4 py-2.5 text-gray-500 dark:text-gray-400">{wt.projectName}</td>
+                    <td className="px-4 py-2.5 font-mono text-cyan-600 dark:text-cyan-400 max-w-[180px] truncate">{wt.branchName}</td>
+                    <td className="px-4 py-2.5"><Badge status={wt.taskStatus} /></td>
+                    <td className="px-4 py-2.5 text-right text-gray-400">{wt.diskSizeMB > 0 ? `${wt.diskSizeMB} MB` : '—'}</td>
+                    <td className="px-4 py-2.5 text-right">
+                      <div className="flex items-center justify-end gap-1.5">
+                        {['completed', 'failed'].includes(wt.taskStatus) && (
+                          <>
+                            <button
+                              onClick={() => handleMerge(wt.taskId)}
+                              disabled={merging === wt.taskId}
+                              className="text-[10px] font-medium px-2 py-1 rounded bg-cyan-50 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-400 hover:bg-cyan-100 dark:hover:bg-cyan-900/50 disabled:opacity-50"
+                            >
+                              {merging === wt.taskId ? '...' : t('worktree.merge', 'Merge')}
+                            </button>
+                            <button
+                              onClick={() => handleRemoveWorktree(wt.taskId)}
+                              className="text-[10px] font-medium px-2 py-1 rounded bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/30"
+                            >
+                              {t('worktree.remove', 'Remove')}
+                            </button>
+                          </>
+                        )}
+                        {!['completed', 'failed'].includes(wt.taskStatus) && (
+                          <span className="text-[10px] text-gray-400 italic">{t('worktree.inUse', 'In use')}</span>
+                        )}
+                      </div>
+                      {mergeResult && mergeResult.taskId === wt.taskId && (
+                        <p className={`text-[10px] mt-1 ${mergeResult.success ? 'text-emerald-600' : 'text-red-500'}`}>
+                          {mergeResult.message}
+                        </p>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="px-4 py-2 border-t border-gray-100 dark:border-gray-700 text-[10px] text-gray-400 flex justify-between">
+              <span>{t('worktree.totalDisk', { total: worktrees.reduce((s, w) => s + w.diskSizeMB, 0).toFixed(0), defaultValue: `Total disk: ${worktrees.reduce((s, w) => s + w.diskSizeMB, 0).toFixed(0)} MB` })}</span>
+              <span>{t('worktree.limit', { current: worktrees.length, max: licenseLimits?.max_parallel_per_project ?? 1, defaultValue: `${worktrees.length} / ${licenseLimits?.max_parallel_per_project ?? 1} per project` })}</span>
+            </div>
+          </div>
         </div>
       )}
     </div>

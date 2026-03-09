@@ -148,6 +148,22 @@ export interface UpdateInfo {
   releaseNotes?: string;
 }
 
+export interface WorktreeInfo {
+  taskId: string;
+  taskTitle: string;
+  taskStatus: string;
+  branchName: string;
+  worktreePath: string;
+  projectName: string;
+  projectId: string;
+  diskSizeMB: number;
+}
+
+export interface ConflictFile {
+  file: string;
+  branches: string[];
+}
+
 export interface UpdateProgress {
   percent: number;
   bytesPerSecond: number;
@@ -174,6 +190,7 @@ export interface Settings {
   postFixFilesPerComment: number;
   testTimeoutMin: number;
   testFixRetries: number;
+  maxParallelPerProject?: number;
   // License
   licenseKey?: string;
   licenseStatus?: string;
@@ -533,6 +550,12 @@ export interface ElectronAPI {
   // Notifications
   getNotificationsConfig: () => Promise<NotificationsConfig>;
   updateNotificationsConfig: (config: NotificationsConfig) => Promise<void>;
+
+  // Worktrees
+  listWorktrees: () => Promise<WorktreeInfo[]>;
+  detectWorktreeConflicts: (projectId: string) => Promise<ConflictFile[]>;
+  mergeWorktreeBranch: (taskId: string) => Promise<{ success: boolean; message: string }>;
+  removeWorktreeForTask: (taskId: string) => Promise<void>;
 
   // App info
   getAppVersion: () => Promise<string>;

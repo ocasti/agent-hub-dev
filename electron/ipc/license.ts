@@ -230,7 +230,10 @@ export function getEffectiveMaxReviewLoops(db: Database.Database): number {
 
 export function getMaxParallelPerProject(db: Database.Database): number {
   const limits = getCachedLimits(db);
-  return limits.max_parallel_per_project;
+  if (limits.max_parallel_per_project <= 1) return 1; // Free/Registered — not configurable
+  // Premium: user can configure, capped at tier max
+  const userSetting = parseInt(getSettingValue(db, 'max_parallel_per_project') || '3', 10);
+  return Math.min(Math.max(1, userSetting), limits.max_parallel_per_project);
 }
 
 export function canInstallCommunityPlugin(db: Database.Database): boolean {

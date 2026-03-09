@@ -52,6 +52,7 @@ agent-hub/
 │   │   │   ├── test-runner.ts     # Native test detection & execution
 │   │   │   ├── repo-analysis.ts   # Project analysis & CLAUDE.md reading
 │   │   │   ├── state.ts           # Resolver maps & helpers
+│   │   │   ├── worktree.ts        # Git worktree management (create, remove, symlink, merge, conflicts)
 │   │   │   ├── types.ts           # Shared interfaces & constants
 │   │   │   └── adapters/          # Code hosting adapter pattern
 │   │   │       ├── types.ts       # CodeHostingAdapter interface

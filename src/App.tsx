@@ -630,6 +630,7 @@ export default function App() {
         updateProgress={updateProgress}
         updateDownloaded={updateDownloaded}
         updateError={updateError}
+        licenseLimits={licenseLimits}
         pluginCompatWarnings={pluginCompatWarnings}
         onDownloadUpdate={handleDownloadUpdate}
         onInstallUpdate={handleInstallUpdate}
@@ -682,7 +683,7 @@ export default function App() {
     skills: <SkillsView projects={projects} onUpdateProject={handleUpdateProject} />,
     knowledge: <KnowledgeView projects={projects} />,
     logs: <LogsView projects={projects} />,
-    settings: <SettingsView settings={settings} onUpdate={handleUpdateSetting} onReloadSettings={loadSettings} licensePlan={licensePlan} onOpenLogin={() => setLoginModalOpen(true)} onLogout={handleLogout} onUpgrade={handleUpgrade} onRefreshAccount={handleRefreshAccount} />,
+    settings: <SettingsView settings={settings} onUpdate={handleUpdateSetting} onReloadSettings={loadSettings} licensePlan={licensePlan} licenseLimits={licenseLimits} onOpenLogin={() => setLoginModalOpen(true)} onLogout={handleLogout} onUpgrade={handleUpgrade} onRefreshAccount={handleRefreshAccount} />,
   };
 
   return (

@@ -406,9 +406,15 @@ Tarea 7  Tarea 8    (PR Feedback + Test Runner — paralelas)
 - Creación/limpieza automática
 - UI básica con badges
 
-### V2 (futuro)
-- Detección de conflictos potenciales antes de iniciar (análisis de archivos)
-- Symlink de node_modules para ahorrar disco
-- Merge automático entre worktrees
-- Configuración de max_parallel_per_project por el usuario
-- Dashboard visual de worktrees con estado de cada rama
+### V2 (implementado en v1.4.0)
+- **Detección de conflictos potenciales**: `detectWorktreeConflicts()` analiza archivos modificados en ramas activas y detecta solapamientos antes de iniciar una nueva tarea
+- **Symlink de node_modules**: `setupWorktreeDepsWithSymlink()` intenta symlink primero (junction en Windows), fallback a install completo. Ahorra ~500MB+ por worktree
+- **Merge entre worktrees**: Botón "Merge" en Dashboard para integrar ramas completadas al branch default. Detecta conflictos y aborta si no es limpio
+- **Configuración de max_parallel_per_project**: Setting configurable en Settings (solo Premium). Guardado en DB como `max_parallel_per_project`, capped al límite del tier
+- **Dashboard visual de worktrees**: Tabla interactiva con task, proyecto, rama, estado, uso de disco, acciones (Merge/Remove). Muestra total de disco y límite por proyecto
+
+### V3 (futuro)
+- Auto-merge worktrees cuando no hay conflictos al completar
+- Notificaciones de conflictos detectados entre worktrees activos
+- Worktree diff viewer integrado
+- Soporte para monorepos (scope por package)
