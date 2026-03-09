@@ -370,27 +370,24 @@ IMPORTANT: Output ONLY the acceptance criteria, one per line. No headings, no nu
 
   // ── Health Check ───────────────────────────────────────────────────────────
   ipcMain.handle('agent:healthCheck', async () => {
-    const results = {
+    const results: {
+      claudeInstalled: boolean;
+      claudeVersion?: string;
+      gitInstalled: boolean;
+      specifyInstalled: boolean;
+      pluginClis: { name: string; installed: boolean; version?: string; pluginName: string }[];
+    } = {
       claudeInstalled: false,
-      claudeVersion: undefined as string | undefined,
-      ghInstalled: false,
-      ghVersion: undefined as string | undefined,
+      claudeVersion: undefined,
       gitInstalled: false,
       specifyInstalled: false,
+      pluginClis: [],
     };
 
     try {
       const claudeVersion = await execFileAsync('claude', ['--version']);
       results.claudeInstalled = true;
       results.claudeVersion = claudeVersion.trim();
-    } catch {
-      // not installed
-    }
-
-    try {
-      const ghVersion = await execFileAsync('gh', ['--version']);
-      results.ghInstalled = true;
-      results.ghVersion = ghVersion.split('\n')[0]?.trim();
     } catch {
       // not installed
     }
@@ -406,6 +403,33 @@ IMPORTANT: Output ONLY the acceptance criteria, one per line. No headings, no nu
       const home = process.env.HOME || '';
       const globalSpeckit = join(home, '.claude', 'commands', 'speckit.specify.md');
       results.specifyInstalled = existsSync(globalSpeckit);
+    }
+
+    // Dynamically check CLI requirements from installed plugins
+    try {
+      const { loadAllPlugins } = require('../plugins/loader');
+      const plugins = loadAllPlugins();
+      const checked = new Set<string>();
+      for (const plugin of plugins) {
+        if (!plugin.installed || !plugin.pluginJson?.requirements) continue;
+        for (const req of plugin.pluginJson.requirements) {
+          if (req.type !== 'cli' || checked.has(req.name)) continue;
+          checked.add(req.name);
+          const entry = { name: req.name, installed: false, version: undefined as string | undefined, pluginName: plugin.pluginJson.name || plugin.id };
+          try {
+            const cmd = req.checkCommand || `${req.name} --version`;
+            const [bin, ...args] = cmd.split(' ');
+            const output = await execFileAsync(bin, args);
+            entry.installed = true;
+            entry.version = output.split('\n')[0]?.trim();
+          } catch {
+            // not installed
+          }
+          results.pluginClis.push(entry);
+        }
+      }
+    } catch {
+      // Plugin loader not available
     }
 
     return results;

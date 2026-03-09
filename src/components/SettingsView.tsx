@@ -470,11 +470,6 @@ export default function SettingsView({ settings, onUpdate, onReloadSettings, lic
                 {health.claudeVersion && <span className="text-xs text-gray-400">{health.claudeVersion}</span>}
               </div>
               <div className="flex items-center gap-2">
-                <span className={`w-2 h-2 rounded-full ${health.ghInstalled ? 'bg-emerald-500' : 'bg-red-500'}`} />
-                <span className="text-sm text-gray-600 dark:text-gray-400">GitHub CLI</span>
-                {health.ghVersion && <span className="text-xs text-gray-400">{health.ghVersion}</span>}
-              </div>
-              <div className="flex items-center gap-2">
                 <span className={`w-2 h-2 rounded-full ${health.gitInstalled ? 'bg-emerald-500' : 'bg-red-500'}`} />
                 <span className="text-sm text-gray-600 dark:text-gray-400">Git</span>
               </div>
@@ -483,6 +478,15 @@ export default function SettingsView({ settings, onUpdate, onReloadSettings, lic
                 <span className="text-sm text-gray-600 dark:text-gray-400">{t('healthCheck.specKit')}</span>
                 {!health.specifyInstalled && <span className="text-xs text-red-500">{t('healthCheck.specKitRequired')}</span>}
               </div>
+              {health.pluginClis?.length > 0 && health.pluginClis.map((cli) => (
+                <div key={cli.name} className="flex items-center gap-2">
+                  <span className={`w-2 h-2 rounded-full ${cli.installed ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                  <span className="text-sm text-gray-600 dark:text-gray-400">{cli.name}</span>
+                  {cli.version && <span className="text-xs text-gray-400">{cli.version}</span>}
+                  <span className="text-xs text-gray-400">({cli.pluginName})</span>
+                  {!cli.installed && <span className="text-xs text-amber-500">{t('healthCheck.optional', 'Optional')}</span>}
+                </div>
+              ))}
             </div>
           </div>
         )}

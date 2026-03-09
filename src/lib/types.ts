@@ -228,10 +228,9 @@ export interface NotificationsConfig {
 export interface HealthStatus {
   claudeInstalled: boolean;
   claudeVersion?: string;
-  ghInstalled: boolean;
-  ghVersion?: string;
   gitInstalled: boolean;
   specifyInstalled: boolean;
+  pluginClis: { name: string; installed: boolean; version?: string; pluginName: string }[];
 }
 
 export interface AgentLogMessage {
