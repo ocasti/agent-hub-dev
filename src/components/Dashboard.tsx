@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { Task, Log, Settings, ActiveAgent, UpdateInfo, UpdateProgress, PluginCompatResult, WorktreeInfo, WorktreeDiff, LicenseLimits } from '../lib/types';
 import * as ipc from '../lib/ipc';
@@ -426,7 +426,8 @@ export default function Dashboard({ tasks, logs, settings, agents, updateAvailab
               </thead>
               <tbody>
                 {worktrees.map((wt) => (
-                  <tr key={wt.taskId} className="border-b border-gray-50 dark:border-gray-700/50 last:border-0">
+                  <React.Fragment key={wt.taskId}>
+                  <tr className="border-b border-gray-50 dark:border-gray-700/50 last:border-0">
                     <td className="px-4 py-2.5 font-medium text-gray-800 dark:text-gray-200 max-w-[200px] truncate">{wt.taskTitle}</td>
                     <td className="px-4 py-2.5 text-gray-500 dark:text-gray-400">{wt.projectName}</td>
                     <td className="px-4 py-2.5 font-mono text-cyan-600 dark:text-cyan-400 max-w-[180px] truncate">{wt.branchName}</td>
@@ -506,6 +507,7 @@ export default function Dashboard({ tasks, logs, settings, agents, updateAvailab
                       </td>
                     </tr>
                   )}
+                  </React.Fragment>
                 ))}
               </tbody>
             </table>
