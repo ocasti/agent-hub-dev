@@ -51,8 +51,8 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "agenthub-dev",
-        "repo": "agent-hub"
+        "owner": "ocasti",
+        "repo": "agent-hub-dev"
       }
     ]
   },
