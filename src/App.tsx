@@ -68,10 +68,16 @@ export default function App() {
   useEffect(() => {
     loadData();
     // Non-blocking license validation
-    ipc.validateLicense().then((result) => {
-      setLicensePlan(result.plan as TierName);
-      setLicenseLimits(result.limits);
-    }).catch(() => {});
+    const validateTier = () => {
+      ipc.validateLicense().then((result) => {
+        setLicensePlan(result.plan as TierName);
+        setLicenseLimits(result.limits);
+      }).catch(() => {});
+    };
+    validateTier();
+    // Re-validate tier every 24h to catch server-side changes (e.g. order reversal)
+    const intervalId = setInterval(validateTier, 24 * 60 * 60 * 1000);
+    return () => clearInterval(intervalId);
   }, []);
 
   // Update event listeners
