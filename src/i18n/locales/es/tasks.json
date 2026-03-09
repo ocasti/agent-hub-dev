@@ -76,5 +76,25 @@
   "log.requeued": "Tarea re-encolada (editada)",
   "log.edited": "Tarea editada",
   "log.deleted": "Tarea eliminada",
-  "log.approved": "aprobado"
+  "log.approved": "aprobado",
+
+  "button.import": "Importar desde PM",
+  "bulkImport.title": "Importar desde PM",
+  "bulkImport.selectProjectHint": "Selecciona un proyecto para cargar sus requerimientos del PM",
+  "bulkImport.pickItemsHint": "Selecciona los items a importar como tareas",
+  "bulkImport.labelProject": "Proyecto",
+  "bulkImport.noPmProjects": "Ningun proyecto tiene un plugin PM activo. Activa un plugin PM en algun proyecto primero.",
+  "bulkImport.next": "Siguiente",
+  "bulkImport.back": "Atras",
+  "bulkImport.loading": "Cargando...",
+  "bulkImport.search": "Buscar por titulo o proyecto...",
+  "bulkImport.selectAll": "Seleccionar todo",
+  "bulkImport.deselectAll": "Deseleccionar todo",
+  "bulkImport.noResults": "No hay items que coincidan con la busqueda",
+  "bulkImport.noItems": "No se encontraron items pendientes (los ya importados se excluyen)",
+  "bulkImport.noProject": "Sin proyecto",
+  "bulkImport.selectedCount_one": "{{count}} seleccionado",
+  "bulkImport.selectedCount_other": "{{count}} seleccionados",
+  "bulkImport.importing": "Importando...",
+  "bulkImport.import": "Importar {{count}}"
 }

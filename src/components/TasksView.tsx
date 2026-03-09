@@ -5,6 +5,7 @@ import Badge from './ui/Badge';
 import ProgressBar from './ui/ProgressBar';
 import TaskForm from './TaskForm';
 import TaskDetail from './TaskDetail';
+import BulkImportModal, { type ImportItem } from './BulkImportModal';
 import { IconPlay, IconRuler, IconEdit, IconPause, IconDownload, IconCircleCheck, IconRetry } from './ui/Icons';
 
 interface TasksViewProps {
@@ -44,6 +45,7 @@ export default function TasksView({
   const [editing, setEditing] = useState<Task | null>(null);
   const [filterProject, setFilterProject] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
+  const [showBulkImport, setShowBulkImport] = useState(false);
 
   useEffect(() => {
     if (pendingEditTaskId) {
@@ -83,6 +85,31 @@ export default function TasksView({
     if (isProjectBusy(task.projectId, task.id)) return false;
     return true;
   };
+
+  // Track already-imported PM work item IDs to avoid duplicates
+  const existingPmIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const t of tasks) {
+      if (t.pmWorkItemId) ids.add(t.pmWorkItemId);
+    }
+    return ids;
+  }, [tasks]);
+
+  // Check if any project has a PM plugin active (to show Import button)
+  const hasPmPlugin = useMemo(() => projects.some((p) => p.pluginPm), [projects]);
+
+  function handleBulkImport(projectId: string, items: ImportItem[]) {
+    for (const item of items) {
+      onCreateTask({
+        projectId,
+        title: item.title,
+        description: item.description,
+        acceptanceCriteria: item.acceptanceCriteria,
+        pmWorkItemId: item.pmWorkItemId,
+      });
+    }
+    setShowBulkImport(false);
+  }
 
   // Available statuses from current tasks (for filter dropdown)
   // NOTE: All hooks must be called before any conditional returns
@@ -192,9 +219,19 @@ export default function TasksView({
           <h2 className="text-xl font-bold text-gray-900 dark:text-gray-100">{t('header.title')}</h2>
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">{t('header.subtitle')}</p>
         </div>
-        <button onClick={() => setCreating(true)} className="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-lg">
-          {t('button.new')}
-        </button>
+        <div className="flex items-center gap-2">
+          {hasPmPlugin && (
+            <button
+              onClick={() => setShowBulkImport(true)}
+              className="border border-indigo-300 dark:border-indigo-600 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 text-sm font-medium px-4 py-2 rounded-lg"
+            >
+              {t('button.import', 'Import from PM')}
+            </button>
+          )}
+          <button onClick={() => setCreating(true)} className="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-lg">
+            {t('button.new')}
+          </button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -453,6 +490,15 @@ export default function TasksView({
           </div>
         );
       })}
+
+      {showBulkImport && (
+        <BulkImportModal
+          projects={projects}
+          existingPmIds={existingPmIds}
+          onImport={handleBulkImport}
+          onClose={() => setShowBulkImport(false)}
+        />
+      )}
     </div>
   );
 }

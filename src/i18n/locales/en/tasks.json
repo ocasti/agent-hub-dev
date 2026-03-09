@@ -76,5 +76,25 @@
   "log.requeued": "Task re-queued (edited)",
   "log.edited": "Task edited",
   "log.deleted": "Task deleted",
-  "log.approved": "approved"
+  "log.approved": "approved",
+
+  "button.import": "Import from PM",
+  "bulkImport.title": "Import from PM",
+  "bulkImport.selectProjectHint": "Select a project to load its PM requirements",
+  "bulkImport.pickItemsHint": "Select the items to import as tasks",
+  "bulkImport.labelProject": "Project",
+  "bulkImport.noPmProjects": "No projects have a PM plugin active. Activate a PM plugin in a project first.",
+  "bulkImport.next": "Next",
+  "bulkImport.back": "Back",
+  "bulkImport.loading": "Loading...",
+  "bulkImport.search": "Search by title or project...",
+  "bulkImport.selectAll": "Select all",
+  "bulkImport.deselectAll": "Deselect all",
+  "bulkImport.noResults": "No items match your search",
+  "bulkImport.noItems": "No pending items found (already imported items are excluded)",
+  "bulkImport.noProject": "No project",
+  "bulkImport.selectedCount_one": "{{count}} selected",
+  "bulkImport.selectedCount_other": "{{count}} selected",
+  "bulkImport.importing": "Importing...",
+  "bulkImport.import": "Import {{count}}"
 }

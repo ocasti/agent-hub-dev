@@ -374,8 +374,8 @@ export default function SettingsView({ settings, onUpdate, onReloadSettings, lic
           </div>
         </div>
 
-        {/* Max Concurrent + Parallel per Project + Default Model + Review Loops row */}
-        <div className="grid grid-cols-4 gap-4">
+        {/* Max Concurrent + Parallel per Project + Review Loops row */}
+        <div className="grid grid-cols-3 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
               {t('label.maxConcurrent')}
@@ -426,31 +426,6 @@ export default function SettingsView({ settings, onUpdate, onReloadSettings, lic
               </div>
             )}
             <p className="text-xs text-gray-400 mt-1">{t('maxParallelHelp', 'Max worktrees per project')}</p>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              {t('label.defaultModel')}
-              {licensePlan !== 'premium' && (
-                <IconLock className="w-3 h-3 inline ml-1 text-gray-400" />
-              )}
-            </label>
-            {licensePlan === 'premium' ? (
-              <select
-                value={settings.defaultModel}
-                onChange={(e) => onUpdate('default_model', e.target.value)}
-                className="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
-              >
-                <option value="sonnet">Sonnet 4.6</option>
-                <option value="opus">Opus 4.6</option>
-              </select>
-            ) : (
-              <div className="w-full border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400 rounded-lg px-3 py-2 text-sm cursor-default">
-                Sonnet 4.6
-                <span className="text-xs text-gray-400 ml-2">
-                  ({t('auth.premiumForMore', 'Premium for more')})
-                </span>
-              </div>
-            )}
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
