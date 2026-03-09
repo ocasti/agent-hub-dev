@@ -12,7 +12,11 @@ jobs:
   build-macos:
     strategy:
       matrix:
-        arch: [arm64, x64]
+        include:
+          - arch: arm64
+            arch_flag: --arm64
+          - arch: x64
+            arch_flag: --x64
     runs-on: macos-latest
     steps:
       - name: Checkout
@@ -39,7 +43,7 @@ jobs:
       - name: Build
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run electron:build -- --publish always --mac --arch ${{ matrix.arch }}
+        run: npm run electron:build -- --publish always --mac ${{ matrix.arch_flag }}
 
   build-linux:
     runs-on: ubuntu-latest
@@ -68,7 +72,7 @@ jobs:
       - name: Build
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run electron:build -- --publish always --linux --arch x64
+        run: npm run electron:build -- --publish always --linux --x64
 
   build-windows:
     runs-on: windows-latest
@@ -98,4 +102,4 @@ jobs:
       - name: Build
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run electron:build -- --publish always --win --arch x64
+        run: npm run electron:build -- --publish always --win --x64

@@ -1,5 +1,8 @@
+import path from 'path';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { validateProjectPath, readSettingSources, writeSettingSources } from '../../ipc/skills';
+
+const isWin = process.platform === 'win32';
 
 // Mock fs
 vi.mock('fs', () => ({
@@ -18,9 +21,12 @@ vi.mock('fs', () => ({
 import fs from 'fs';
 
 describe('validateProjectPath', () => {
+  const abs = (p: string) => isWin ? `C:${p.replace(/\//g, '\\')}` : p;
+
   it('should accept a valid absolute path', () => {
-    const result = validateProjectPath('/home/user/projects/my-app');
-    expect(result).toBe('/home/user/projects/my-app');
+    const input = isWin ? 'C:\\Users\\user\\projects\\my-app' : '/home/user/projects/my-app';
+    const result = validateProjectPath(input);
+    expect(result).toBe(input);
   });
 
   it('should reject a relative path', () => {
@@ -32,13 +38,16 @@ describe('validateProjectPath', () => {
   });
 
   it('should normalize paths with trailing slashes', () => {
-    const result = validateProjectPath('/home/user/projects/');
-    expect(result).toBe('/home/user/projects');
+    const input = isWin ? 'C:\\Users\\user\\projects\\' : '/home/user/projects/';
+    const expected = isWin ? 'C:\\Users\\user\\projects' : '/home/user/projects';
+    const result = validateProjectPath(input);
+    expect(result).toBe(expected);
   });
 
   it('should accept deeply nested paths', () => {
-    const result = validateProjectPath('/home/user/deep/nested/project/path');
-    expect(result).toBe('/home/user/deep/nested/project/path');
+    const input = isWin ? 'C:\\Users\\user\\deep\\nested\\project\\path' : '/home/user/deep/nested/project/path';
+    const result = validateProjectPath(input);
+    expect(result).toBe(input);
   });
 });
 
