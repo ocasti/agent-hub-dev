@@ -96,10 +96,22 @@ export async function createWorktree(
   if (existingBranch) {
     // Worktree for an existing branch
     branchName = existingBranch;
+
+    // Clean up any stale worktree reference from a previous interrupted run
     try {
+      await execFileAsync('git', ['worktree', 'prune'], projectPath, 30000, false, extraEnv);
+    } catch { /* non-critical */ }
+
+    // Check if the branch already exists locally
+    const branchExists = await execFileAsync(
+      'git', ['rev-parse', '--verify', existingBranch], projectPath, 10000, false, extraEnv
+    ).then(() => true).catch(() => false);
+
+    if (branchExists) {
+      // Branch exists — attach worktree to it (no -b)
       await execFileAsync('git', ['worktree', 'add', worktreePath, existingBranch], projectPath, 60000, false, extraEnv);
-    } catch {
-      // Branch might not exist locally — create it
+    } else {
+      // Branch doesn't exist locally — create it
       await execFileAsync('git', ['worktree', 'add', '-b', existingBranch, worktreePath], projectPath, 60000, false, extraEnv);
     }
   } else {

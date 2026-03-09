@@ -277,6 +277,15 @@ export async function orchestrateSddWorkflow(
 
       let branchName: string;
 
+      // If worktree_path is set in DB but the directory no longer exists (e.g. app crashed/restarted),
+      // clear it so we can recreate the worktree properly
+      if (task.worktree_path && !existsSync(task.worktree_path)) {
+        sendLog(q, getWindow, taskId, projectName, 'Worktree directory missing — will recreate it.', 'info');
+        q.updateTaskWorktree.run(null, taskId);
+        task.worktree_path = null as unknown as string;
+        workDir = projectPath;
+      }
+
       if (useWorktree && !task.worktree_path) {
         // Worktree mode: create isolated worktree with its own branch
         const wt = await createWorktree(
