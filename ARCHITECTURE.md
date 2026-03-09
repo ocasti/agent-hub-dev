@@ -7,7 +7,7 @@
 | **Framework** | Electron | Cross-platform desktop (macOS, Linux, Windows) |
 | **Frontend** | React 19 + TypeScript + TailwindCSS + Vite | UI components, state, styling |
 | **Database** | SQLite (better-sqlite3) | Local persistent storage |
-| **CLI Integration** | Claude Code CLI (subprocess) | AI-powered code generation |
+| **CLI Integration** | Multi-Agent Adapter (Claude, Gemini, Codex, etc.) | AI-powered code generation via pluggable CLI agents |
 | **Plugin Transport** | MCP (Model Context Protocol) | Universal integration layer |
 | **Real-time** | Electron IPC (main → renderer) | Log streaming, phase updates |
 
@@ -42,14 +42,14 @@
 │  │  └──────────────────────────────────────────────────┘  │  │
 │  │                                                        │  │
 │  │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐  │  │
-│  │  │ Plugin       │ │ Claude CLI   │ │ SQLite       │  │  │
-│  │  │ Engine       │ │ Runner       │ │ Database     │  │  │
-│  │  │              │ │              │ │              │  │  │
-│  │  │ Loads        │ │ spawn()      │ │ Projects     │  │  │
-│  │  │ manifests,   │ │ --print      │ │ Tasks        │  │  │
-│  │  │ fires hooks, │ │ --model      │ │ Runs, Logs   │  │  │
-│  │  │ resolves     │ │ bypass perms │ │ Knowledge    │  │  │
-│  │  │ templates    │ │ stdin prompt │ │ Settings     │  │  │
+│  │  │ Plugin       │ │ Agent        │ │ SQLite       │  │  │
+│  │  │ Engine       │ │ Adapter      │ │ Database     │  │  │
+│  │  │              │ │ System       │ │              │  │  │
+│  │  │ Loads        │ │ resolve →    │ │ Projects     │  │  │
+│  │  │ manifests,   │ │ validate →   │ │ Tasks        │  │  │
+│  │  │ fires hooks, │ │ spawn()      │ │ Runs, Logs   │  │  │
+│  │  │ resolves     │ │ stdin prompt │ │ Knowledge    │  │  │
+│  │  │ templates    │ │ failover     │ │ Settings     │  │  │
 │  │  └──────────────┘ └──────────────┘ └──────────────┘  │  │
 │  └────────────────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────────────┘
@@ -92,9 +92,15 @@ agent-hub/
 │   │   │   ├── git-ops.ts           # Branch, commit, WIP operations
 │   │   │   ├── pr-feedback.ts       # Fetch & Fix cycle (uses code-hosting adapter)
 │   │   │   ├── test-runner.ts       # Native test detection & execution
-│   │   │   ├── repo-analysis.ts     # Project analysis & CLAUDE.md reading
+│   │   │   ├── repo-analysis.ts     # Project analysis & AGENT.md reading
 │   │   │   ├── state.ts            # Resolver maps, abort controllers, waiters
 │   │   │   ├── types.ts            # Shared interfaces & constants
+│   │   │   ├── agents/             # Multi-agent adapter system (v2.0)
+│   │   │   │   ├── types.ts        # AgentAdapter interface, GenericAgentDef, AGENT_CONFIG_FOLDERS
+│   │   │   │   ├── claude-adapter.ts  # Claude Code specialized adapter
+│   │   │   │   ├── generic-adapter.ts # Config-driven adapter for 14 other agents
+│   │   │   │   ├── registry.ts     # Agent registry, resolution, failover, speckit detection
+│   │   │   │   └── index.ts        # Public API re-exports
 │   │   │   └── adapters/            # Code hosting adapter pattern
 │   │   │       ├── types.ts         # CodeHostingAdapter interface & types
 │   │   │       ├── github.ts        # GitHub adapter (gh CLI)
@@ -172,24 +178,24 @@ The workflow has two layers: **core phases** (always present) and **plugin phase
 ```
 Phase 0 — Spec Review
   ├── hook: on:before_spec (enrichment — PM plugin can inject requirement data)
-  ├── Claude analyzes spec
+  ├── AI agent analyzes spec
   ├── If incomplete → hook: on:spec_needs_input → pause with suggestions → user edits/accepts
   └── hook: on:spec_complete
 
 Phase 1 — Plan
-  ├── Claude decomposes into subtasks
+  ├── AI agent decomposes into subtasks
   ├── hook: on:plan_ready (plan generated, awaiting approval)
   ├── Plan review gate → user approves or re-plans
   └── hook: on:plan_approved (PM plugin can create dev_tasks)
 
 Phase 2 — Implement
   ├── Git: prepare feature branch
-  ├── Claude implements with TDD
+  ├── AI agent implements with TDD
   └── hook: on:implement_complete (PM plugin can mark subtasks done)
 
 Phase 3 — Quality Gate (loop)
   ├── hook: on:review_started (each review iteration)
-  ├── Claude reviews code quality
+  ├── AI agent reviews code quality
   ├── If pass → hook: on:quality_pass (PM plugin can mark criteria met)
   ├── If fail → hook: on:quality_fail (PM plugin can create QA issue)
   ├── Fix → re-review (up to maxReviewLoops)
@@ -209,7 +215,7 @@ Phase 4 — Ship (capability: "ship")
 
 Phase 5 — PR Feedback (capability: "pr_feedback")
   ├── User clicks "Fetch & Fix" or "Approve"
-  ├── If comments → hook: on:pr_changes_requested → Claude fixes → re-push → hook: on:pr_fix_pushed
+  ├── If comments → hook: on:pr_changes_requested → AI agent fixes → re-push → hook: on:pr_fix_pushed
   ├── hook: on:pr_approved (PM → status "Done", Notify → message)
   └── hook: on:task_complete (all plugins react)
 ```
@@ -267,7 +273,7 @@ Agent Hub SQLite                 # Encrypted secrets, per-project plugin config
 
 ### Core Tables
 
-- **projects**: id, name, path, repo, description, optional_skills, test_command, code_hosting, code_hosting_config, plugin_pm, plugin_pm_config
+- **projects**: id, name, path, repo, description, optional_skills, test_command, code_hosting, code_hosting_config, plugin_pm, plugin_pm_config, ai_agent, ai_agent_phases
 - **tasks**: id, project_id, title, description, acceptance_criteria, images, model, status, pr_number, review_cycle, spec_suggestions, plan_summary, branch_name, criteria_status, pm_work_item_id, pm_work_item_url
 - **agent_runs**: id, task_id, phase, started_at, finished_at, result, output, error_output
 - **logs**: id, task_id, project_name, message, kind, created_at
@@ -285,6 +291,14 @@ ALTER TABLE tasks ADD COLUMN pm_work_item_id TEXT DEFAULT NULL;
 ALTER TABLE tasks ADD COLUMN pm_work_item_url TEXT DEFAULT NULL;
 ```
 
+### Multi-Agent Columns (migration 016)
+
+```sql
+ALTER TABLE projects ADD COLUMN ai_agent TEXT DEFAULT 'claude';
+ALTER TABLE projects ADD COLUMN ai_agent_phases TEXT DEFAULT '{}';
+INSERT OR IGNORE INTO settings (key, value) VALUES ('default_ai_agent', 'claude');
+```
+
 ### Code Hosting Config (migration 012)
 
 ```sql
@@ -294,19 +308,77 @@ ALTER TABLE projects ADD COLUMN code_hosting_config TEXT DEFAULT '{}';
 
 ---
 
-## Claude CLI Integration
+## Agent Adapter System (v2.0)
 
-Agent Hub executes Claude Code CLI as a subprocess:
+Agent Hub supports multiple AI agent CLIs via a pluggable adapter pattern. The system resolves which agent to use per project/phase, validates it's installed, and handles automatic failover.
+
+### Supported Agents
+
+**Verified**: Claude Code, Gemini CLI.
+
+The architecture is extensible — new agents can be added by defining a `GenericAgentDef` in `generic-adapter.ts` and adding the config folder to `AGENT_CONFIG_FOLDERS`. Each agent must be tested end-to-end (headless mode, tool execution, speckit format) before inclusion.
+
+### Architecture
 
 ```
-claude --model {sonnet|opus} --print --permission-mode bypassPermissions
+┌──────────────────────────────────────────────────────────┐
+│                    Agent Adapter System                    │
+│                                                          │
+│  resolveAgentForPhase(db, projectId, phase)              │
+│    → tier rules → project config → global default        │
+│    → returns { primary: AgentAdapter, fallback? }        │
+│                                                          │
+│  runAgentPhase(db, projectId, phase, options)             │
+│    → validate installed → spawn → failover if needed     │
+│                                                          │
+│  ┌─────────────────┐  ┌──────────────────────────────┐  │
+│  │  ClaudeAdapter   │  │  GenericAdapter (config-driven) │
+│  │                  │  │                              │  │
+│  │  claude --model  │  │  Built from GenericAgentDef: │  │
+│  │  --print         │  │  binary, versionArgs,        │  │
+│  │  --permission-   │  │  buildRunArgs(), stdinPrompt, │  │
+│  │  mode bypass     │  │  envCleanKeys, configFolder  │  │
+│  └─────────────────┘  └──────────────────────────────┘  │
+│                                                          │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │  Agent Registry                                   │   │
+│  │  registerAgent() · getAgent() · getAllAgents()     │   │
+│  │  getInstalledAgents() · checkSpeckitForAgent()    │   │
+│  └──────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────┘
 ```
 
-- Prompt is sent via **stdin** (avoids shell escaping and arg length limits)
-- Output is streamed **line by line** via stdout → IPC → renderer
-- MCP servers from `~/.claude.json` are automatically available
-- `cleanEnv(extraEnv?)` strips `CLAUDECODE` env var and injects per-project credentials
+### Agent Resolution by Tier
+
+| Tier | Resolution |
+|------|-----------|
+| **Free** | Global default only — one agent for ALL projects |
+| **Registered** | Project override → global default → `'claude'` |
+| **Premium** | Phase config → project default → global default (+ fallback per phase) |
+
+### Validation & Failover
+
+Before spawning, `runAgentPhase` validates the agent is installed:
+1. If primary not installed → try fallback
+2. If fallback not installed → try any installed agent
+3. If no agent installed → clear error message
+
+### SDD Kit Detection
+
+Each agent has its own config directory (aligned with Specify CLI's `AGENT_CONFIG`):
+- Claude → `~/.claude/commands/speckit.*.md`
+- Gemini → `~/.gemini/commands/speckit.*.md`
+- Codex → `~/.codex/commands/speckit.*.md`
+- etc. (see `AGENT_CONFIG_FOLDERS` in `agents/types.ts`)
+
+`checkSpeckitForAgent(agentId)` checks if SDD Kit commands are installed for a given agent.
+
+### CLI Execution
+
+All agents receive prompts via **stdin** and output via **stdout**:
+- `cleanEnv(extraEnv?)` strips agent-specific env vars and injects per-project credentials
 - macOS PATH fix ensures CLI tools are found when launched from Finder
+- MCP servers from `~/.claude.json` are automatically available (Claude-specific)
 
 ---
 
@@ -393,8 +465,9 @@ This enables concurrent tasks with different accounts — no global `gh auth swi
 
 ## User Prerequisites
 
-1. **Claude Code CLI** — installed and authenticated (`claude login`)
+1. **At least one AI agent CLI** — Claude Code (`claude`), Gemini CLI (`gemini`), Codex CLI (`codex`), or any other supported agent
 2. **Git** — configured with user name and email
 3. **Node.js 20+** — required for Electron
-4. **Code Hosting CLI** (optional) — `gh` for GitHub, `glab` for GitLab, etc.
-5. **MCP servers** (optional) — configured via plugins for PM tools, etc.
+4. **Specify CLI** (recommended) — `uv tool install specify-cli` for SDD Kit commands per agent
+5. **Code Hosting CLI** (optional) — `gh` for GitHub, `glab` for GitLab, etc.
+6. **MCP servers** (optional) — configured via plugins for PM tools, etc.

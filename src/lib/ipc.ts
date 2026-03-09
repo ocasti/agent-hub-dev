@@ -7,6 +7,7 @@ import type {
   Settings,
   Log,
   HealthStatus,
+  InstalledAgent,
   AgentLogMessage,
   AgentPhaseUpdate,
   LicenseLimits,
@@ -46,6 +47,7 @@ export const runAgent = (taskId: string, phase?: string): Promise<void> =>
   api().runAgent(taskId, phase);
 export const stopAgent = (taskId: string): Promise<void> => api().stopAgent(taskId);
 export const healthCheck = (): Promise<HealthStatus> => api().healthCheck();
+export const getInstalledAgents = (): Promise<InstalledAgent[]> => api().getInstalledAgents();
 
 export const onAgentLog = (callback: (log: AgentLogMessage) => void): (() => void) =>
   api().onAgentLog(callback);

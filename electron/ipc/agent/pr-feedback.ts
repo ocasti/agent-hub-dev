@@ -1,8 +1,9 @@
 import type Database from 'better-sqlite3';
 import type { TaskRow, KnowledgeRow, Queries, GetWindow } from './types';
 import { activeControllers, sendLog, sendPhaseUpdate, checkAborted, getSettingValue, waitForPushApproval, waitForFixTests } from './state';
-import { execFileAsync, runClaudePhase } from './claude-cli';
-import { readClaudeMd } from './repo-analysis';
+import { execFileAsync } from './claude-cli';
+import { runAgentPhase } from './agents';
+import { readAgentMd } from './repo-analysis';
 import { parsePhaseOutput, saveKnowledgeEntries } from './output-parser';
 import { buildSingleThreadPrompt } from './prompt-builder';
 import { commitWipIfDirty, getDefaultBranch } from './git-ops';
@@ -34,7 +35,7 @@ export async function runFetchAndFix(
     const projectPath = task.project_path;
     const workDir = task.worktree_path || projectPath;
     const projectName = task.project_name;
-    const projectDescription = readClaudeMd(workDir) || task.project_description || '';
+    const projectDescription = readAgentMd(workDir) || task.project_description || '';
     const model = task.model;
     const criteria = JSON.parse(task.acceptance_criteria || '[]') as string[];
     const knowledge = (q.getProjectKnowledge.all(task.project_id) || []) as KnowledgeRow[];
@@ -306,7 +307,9 @@ export async function runFetchAndFix(
         type: 'general',
         content: feedback.generalComments,
       }, undefined, branchHistory, prFiles);
-      const { output, exitCode } = await runClaudePhase(workDir, model, prompt, taskId, q, getWindow, controller, 600000, extraEnv);
+      const { output, exitCode } = await runAgentPhase(db, task.project_id, 5, {
+        projectPath: workDir, model, prompt, taskId, q, getWindow, controller, timeoutMs: 600000, extraEnv,
+      });
       if (exitCode !== 0) {
         sendLog(q, getWindow, taskId, projectName, 'Warning: Failed to process general comments. Continuing...', 'error');
       } else {
@@ -366,7 +369,9 @@ export async function runFetchAndFix(
         type: 'thread',
         thread,
       }, previousActions, branchHistory, prFiles);
-      const { output, exitCode } = await runClaudePhase(workDir, model, prompt, taskId, q, getWindow, controller, 600000, extraEnv);
+      const { output, exitCode } = await runAgentPhase(db, task.project_id, 5, {
+        projectPath: workDir, model, prompt, taskId, q, getWindow, controller, timeoutMs: 600000, extraEnv,
+      });
 
       if (exitCode !== 0) {
         sendLog(q, getWindow, taskId, projectName, `Warning: Failed to fix ${threadLabel}. Continuing...`, 'error');
@@ -441,7 +446,9 @@ export async function runFetchAndFix(
 3. If there are staged changes: git commit -m "${commitMsg}"
 4. If no changes: output "No changes to commit"
 Do NOT push yet.`;
-      await runClaudePhase(workDir, model, commitPrompt, taskId, q, getWindow, controller, 60000, extraEnv);
+      await runAgentPhase(db, task.project_id, 5, {
+        projectPath: workDir, model, prompt: commitPrompt, taskId, q, getWindow, controller, timeoutMs: 60000, extraEnv,
+      });
 
       // Accumulate action for context in subsequent threads
       previousActions.push(`[${action.toUpperCase()}] ${threadLabel}: ${replyText.length > 200 ? replyText.substring(0, 200) + '...' : replyText}`);
@@ -537,7 +544,9 @@ ${testResult.output}
 
 Fix the test failures and ensure all tests pass. Only modify test files or the minimal code needed to fix the failures.`;
 
-        await runClaudePhase(workDir, model, fixPrompt, taskId, q, getWindow, controller, 600000, extraEnv);
+        await runAgentPhase(db, task.project_id, 5, {
+          projectPath: workDir, model, prompt: fixPrompt, taskId, q, getWindow, controller, timeoutMs: 600000, extraEnv,
+        });
 
         // Re-run native tests
         const retryResult = await runNativeTests(workDir, testCmd, taskId, projectName, q, getWindow, testTimeoutMs);
@@ -591,7 +600,9 @@ Test output (last 3000 chars):
 ${latestTestResult.output}
 
 Fix the test failures and ensure all tests pass.`;
-          await runClaudePhase(workDir, model, retryFixPrompt, taskId, q, getWindow, controller, 600000, extraEnv);
+          await runAgentPhase(db, task.project_id, 5, {
+            projectPath: workDir, model, prompt: retryFixPrompt, taskId, q, getWindow, controller, timeoutMs: 600000, extraEnv,
+          });
 
           const postFixResult = await runNativeTests(workDir, testCmd, taskId, projectName, q, getWindow, testTimeoutMs);
           if (postFixResult.pass || postFixResult.timedOut) {
@@ -676,7 +687,9 @@ Fix the test failures and ensure all tests pass.`;
           subProgress: { current: totalItems, total: totalItems, label: 'Revision', step: 'Applying revision' },
         });
         const revisionPrompt = `The user reviewed the PR fixes before pushing and requested the following revision:\n\n${decision.prompt}\n\nApply the requested changes. Only modify files that are part of this PR.`;
-        await runClaudePhase(workDir, model, revisionPrompt, taskId, q, getWindow, controller, 600000);
+        await runAgentPhase(db, task.project_id, 5, {
+          projectPath: workDir, model, prompt: revisionPrompt, taskId, q, getWindow, controller, timeoutMs: 600000, extraEnv,
+        });
 
         // Update summary and pause again
         q.updateTaskStatus.run('push_review', taskId);
@@ -716,7 +729,9 @@ Fix the test failures and ensure all tests pass.`;
 3. If count is 1: git commit --amend -m "${squashMsg}"
 4. If count is 0: output "No commits to squash"
 5. git push --force-with-lease`;
-    await runClaudePhase(workDir, model, squashAndPushPrompt, taskId, q, getWindow, controller, 120000, extraEnv);
+    await runAgentPhase(db, task.project_id, 5, {
+      projectPath: workDir, model, prompt: squashAndPushPrompt, taskId, q, getWindow, controller, timeoutMs: 120000, extraEnv,
+    });
 
     // Minimize current cycle reviews + delete old cycle reviews
     await minimizeOldReviews(projectPath, task.pr_number as number, taskId, projectName, q, getWindow, extraEnv);
@@ -752,7 +767,7 @@ Fix the test failures and ensure all tests pass.`;
 export async function runFetchAndFixPushOnly(
   taskId: string,
   q: Queries,
-  _db: Database.Database,
+  db: Database.Database,
   getWindow: GetWindow
 ) {
   const controller = new AbortController();
@@ -768,7 +783,7 @@ export async function runFetchAndFixPushOnly(
     const model = task.model;
 
     // Resolve code hosting env vars for subprocess calls
-    const extraEnv = resolveEnvVars(task.project_id, _db);
+    const extraEnv = resolveEnvVars(task.project_id, db);
 
     // Resolve all unresolved threads before pushing (deferred data was lost)
     sendPhaseUpdate(getWindow, {
@@ -802,7 +817,9 @@ export async function runFetchAndFixPushOnly(
 3. If count is 1: git commit --amend -m "${squashMsg}"
 4. If count is 0: git add -A && git commit -m "${squashMsg}" (stage any uncommitted changes)
 5. git push --force-with-lease`;
-    await runClaudePhase(workDir, model, squashAndPushPrompt, taskId, q, getWindow, controller, 120000, extraEnv);
+    await runAgentPhase(db, task.project_id, 5, {
+      projectPath: workDir, model, prompt: squashAndPushPrompt, taskId, q, getWindow, controller, timeoutMs: 120000, extraEnv,
+    });
 
     // Cleanup old reviews
     sendPhaseUpdate(getWindow, {

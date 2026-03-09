@@ -18,6 +18,8 @@ interface ProjectInput {
   codeHostingConfig?: Record<string, string>;
   pluginPm?: string | null;
   pluginPmConfig?: Record<string, string>;
+  aiAgent?: string;
+  aiAgentPhases?: Record<string, { primary: string; fallback?: string }>;
 }
 
 function rowToProject(row: Record<string, unknown>) {
@@ -33,6 +35,8 @@ function rowToProject(row: Record<string, unknown>) {
     codeHostingConfig: JSON.parse((row.code_hosting_config as string) || '{}'),
     pluginPm: (row.plugin_pm as string) || undefined,
     pluginPmConfig: JSON.parse((row.plugin_pm_config as string) || '{}'),
+    aiAgent: (row.ai_agent as string) || 'claude',
+    aiAgentPhases: JSON.parse((row.ai_agent_phases as string) || '{}'),
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   };
@@ -67,7 +71,9 @@ export function registerProjectHandlers(ipcMain: IpcMain, db: Database.Database)
       project.codeHosting || null,
       JSON.stringify(project.codeHostingConfig || {}),
       project.pluginPm || null,
-      JSON.stringify(project.pluginPmConfig || {})
+      JSON.stringify(project.pluginPmConfig || {}),
+      project.aiAgent || 'claude',
+      JSON.stringify(project.aiAgentPhases || {})
     );
 
     // Sync skills to project's .claude/settings.json
@@ -96,6 +102,8 @@ export function registerProjectHandlers(ipcMain: IpcMain, db: Database.Database)
       updates.codeHostingConfig ? JSON.stringify(updates.codeHostingConfig) : (existing.code_hosting_config as string) || '{}',
       updates.pluginPm !== undefined ? updates.pluginPm : (existing.plugin_pm as string | null),
       updates.pluginPmConfig ? JSON.stringify(updates.pluginPmConfig) : (existing.plugin_pm_config as string) || '{}',
+      updates.aiAgent !== undefined ? updates.aiAgent : (existing.ai_agent as string) || 'claude',
+      updates.aiAgentPhases ? JSON.stringify(updates.aiAgentPhases) : (existing.ai_agent_phases as string) || '{}',
       id
     );
 

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { Project } from '../lib/types';
+import type { Project, TierName } from '../lib/types';
 import { CORE_SKILLS } from '../lib/skills';
 import ProjectForm from './ProjectForm';
 import SkillTag from './ui/SkillTag';
@@ -12,9 +12,11 @@ interface ProjectsViewProps {
   onDelete: (id: string) => void;
   onAnalyzeRepo?: (projectId: string) => Promise<void>;
   analyzingProjectId?: string | null;
+  licensePlan?: TierName;
+  multiAgentMode?: 'global_only' | 'per_project' | 'per_phase';
 }
 
-export default function ProjectsView({ projects, onSave, onDelete, onAnalyzeRepo, analyzingProjectId }: ProjectsViewProps) {
+export default function ProjectsView({ projects, onSave, onDelete, onAnalyzeRepo, analyzingProjectId, licensePlan = 'free', multiAgentMode = 'global_only' }: ProjectsViewProps) {
   const { t } = useTranslation(['projects', 'common']);
   const [form, setForm] = useState<Project | 'new' | null>(null);
 
@@ -43,6 +45,8 @@ export default function ProjectsView({ projects, onSave, onDelete, onAnalyzeRepo
             setForm(null);
           }}
           onCancel={() => setForm(null)}
+          licensePlan={licensePlan}
+          multiAgentMode={multiAgentMode}
         />
       )}
 

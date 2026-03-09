@@ -205,6 +205,7 @@ export function registerTaskHandlers(ipcMain: IpcMain, db: Database.Database) {
     return {
       maxConcurrent: parseInt(settings.max_concurrent as string) || 3,
       defaultModel: settings.default_model || 'sonnet',
+      defaultAiAgent: (settings.default_ai_agent as string) || 'claude',
       maxReviewLoops: parseInt(settings.max_review_loops as string) || 5,
       theme: (settings.theme as string) || 'light',
       locale: (settings.locale as string) || 'en',
@@ -231,6 +232,7 @@ export function registerTaskHandlers(ipcMain: IpcMain, db: Database.Database) {
 
   const ALLOWED_SETTINGS_KEYS = new Set([
     'max_concurrent', 'max_parallel_per_project', 'default_model', 'max_review_loops', 'theme', 'locale',
+    'default_ai_agent',
     'thread_max_files', 'thread_max_lines', 'postfix_lines_per_comment',
     'postfix_files_per_comment', 'test_timeout_min', 'test_fix_retries',
     'branchCounter',
@@ -244,6 +246,14 @@ export function registerTaskHandlers(ipcMain: IpcMain, db: Database.Database) {
       throw new Error(`Settings key not allowed: ${key}`);
     }
     q.upsertSetting.run(key, value);
+
+    // Free tier: changing global agent updates ALL projects
+    if (key === 'default_ai_agent') {
+      const tier = (q.getSetting.get('license_plan') as { value: string } | undefined)?.value || 'free';
+      if (tier === 'free') {
+        db.prepare('UPDATE projects SET ai_agent = ?').run(value);
+      }
+    }
   });
 
   // Logs

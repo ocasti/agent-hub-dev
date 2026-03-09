@@ -3,8 +3,9 @@ import { existsSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import type { TaskRow, KnowledgeRow, Queries, GetWindow } from './types';
 import { activeControllers, sendLog, sendPhaseUpdate, checkAborted, getSettingValue, waitForSpecContinue, waitForPlanContinue } from './state';
-import { execFileAsync, runClaudePhase } from './claude-cli';
-import { readClaudeMd, runRepoAnalysis } from './repo-analysis';
+import { execFileAsync } from './claude-cli';
+import { readAgentMd, runRepoAnalysis } from './repo-analysis';
+import { runAgentPhase, resolveAgentForPhase, checkSpeckitForAgent } from './agents';
 import { readSettingSources } from '../skills';
 import { parsePhaseOutput, saveKnowledgeEntries } from './output-parser';
 import { buildPhasePrompt, buildFixPrompt } from './prompt-builder';
@@ -44,7 +45,7 @@ export async function orchestrateSddWorkflow(
     const projectPath = task.project_path;  // original repo (always)
     let workDir = task.worktree_path || projectPath; // effective working directory
     const projectName = task.project_name;
-    let projectDescription = readClaudeMd(workDir) || task.project_description || '';
+    let projectDescription = readAgentMd(workDir) || task.project_description || '';
     const model = task.model;
     const useWorktree = getMaxParallelPerProject(db) > 1;
 
@@ -75,31 +76,37 @@ export async function orchestrateSddWorkflow(
 
     await fireHook('on:workflow_started', { ...hookCtx, phase: startPhase }, db);
 
-    // ── SDD: check speckit commands availability (global ~/.claude/commands/) ──
-    const home = process.env.HOME || '';
-    const globalCommandsDir = join(home, '.claude', 'commands');
-    const useSpeckit = existsSync(join(globalCommandsDir, 'speckit.specify.md'));
-    sendLog(q, getWindow, taskId, projectName, useSpeckit ? 'Speckit commands detected (global)' : 'Speckit commands not found — using built-in spec analysis', 'info');
+    // ── SDD: check speckit commands for the resolved agent ──
+    // Each agent has its own commands dir: ~/{configFolder}/commands/speckit.*.md
+    // Configured via: specify init . --ai {agent}
+    const resolvedAgent = resolveAgentForPhase(db, task.project_id, 0);
+    const useSpeckit = checkSpeckitForAgent(resolvedAgent.primary.id);
+    sendLog(q, getWindow, taskId, projectName,
+      useSpeckit
+        ? `SDD Kit detected for ${resolvedAgent.primary.name}`
+        : `SDD Kit not found for ${resolvedAgent.primary.name} — using built-in SDD prompts. Run "specify init . --ai ${resolvedAgent.primary.id}" to enable.`,
+      'info');
 
-    // ── Auto-analyze repo if no CLAUDE.md exists ──────────────────────────
-    const claudeMdPath = join(workDir, 'CLAUDE.md');
-    if (!existsSync(claudeMdPath)) {
-      sendLog(q, getWindow, taskId, projectName, 'No CLAUDE.md found. Auto-analyzing repo...', 'info');
+    // ── Auto-analyze repo if no AGENT.md (or legacy CLAUDE.md) exists ────
+    const agentMdPath = join(workDir, 'AGENT.md');
+    const legacyClaudeMdPath = join(workDir, 'CLAUDE.md');
+    if (!existsSync(agentMdPath) && !existsSync(legacyClaudeMdPath)) {
+      sendLog(q, getWindow, taskId, projectName, `No AGENT.md found. Auto-analyzing repo with ${resolvedAgent.primary.name}...`, 'info');
       try {
         const skills = readSettingSources(join(workDir, '.claude', 'settings.json'));
-        const result = await runRepoAnalysis(workDir, undefined, skills);
-        projectDescription = result.claudeMdContent;
+        const result = await runRepoAnalysis(workDir, undefined, skills, db, task.project_id);
+        projectDescription = result.agentMdContent;
 
-        // Write CLAUDE.md to project root
-        writeFileSync(claudeMdPath, result.claudeMdContent, 'utf-8');
+        // Write AGENT.md to project root
+        writeFileSync(agentMdPath, result.agentMdContent, 'utf-8');
 
         // Save short description to DB
         const proj = q.getProject.get(task.project_id) as { name: string; path: string; repo: string | null; optional_skills: string; test_command?: string } | undefined;
         if (proj) {
-          q.updateProject.run(proj.name, proj.path, proj.repo, result.shortDescription, proj.optional_skills, proj.test_command ?? '', (proj as Record<string, unknown>).code_hosting ?? null, (proj as Record<string, unknown>).code_hosting_config ?? '{}', (proj as Record<string, unknown>).plugin_pm ?? null, (proj as Record<string, unknown>).plugin_pm_config ?? '{}', task.project_id);
+          q.updateProject.run(proj.name, proj.path, proj.repo, result.shortDescription, proj.optional_skills, proj.test_command ?? '', (proj as Record<string, unknown>).code_hosting ?? null, (proj as Record<string, unknown>).code_hosting_config ?? '{}', (proj as Record<string, unknown>).plugin_pm ?? null, (proj as Record<string, unknown>).plugin_pm_config ?? '{}', (proj as Record<string, unknown>).ai_agent ?? 'claude', (proj as Record<string, unknown>).ai_agent_phases ?? '{}', task.project_id);
         }
 
-        sendLog(q, getWindow, taskId, projectName, 'Repo auto-analysis complete. CLAUDE.md created.', 'ok');
+        sendLog(q, getWindow, taskId, projectName, 'Repo auto-analysis complete. AGENT.md created.', 'ok');
       } catch (err) {
         sendLog(q, getWindow, taskId, projectName, `Repo auto-analysis warning: ${(err as Error).message}. Continuing without context.`, 'info');
       }
@@ -141,7 +148,9 @@ export async function orchestrateSddWorkflow(
       sendLog(q, getWindow, taskId, projectName, '── Phase 0: Spec Review ──', 'info');
 
       const prompt = buildPhasePrompt(0, task, projectDescription, knowledge, criteria, undefined, useSpeckit);
-      const { output, exitCode } = await runClaudePhase(workDir, model, prompt, taskId, q, getWindow, controller, 300000, extraEnv);
+      const { output, exitCode } = await runAgentPhase(db, task.project_id, 0, {
+        projectPath: workDir, model, prompt, taskId, q, getWindow, controller, timeoutMs: 300000, extraEnv,
+      });
 
       if (exitCode !== 0) {
         q.updateTaskStatus.run('failed', taskId);
@@ -219,7 +228,9 @@ export async function orchestrateSddWorkflow(
       sendLog(q, getWindow, taskId, projectName, '── Phase 1: Plan ──', 'info');
 
       const planPrompt = buildPhasePrompt(1, task, projectDescription, knowledge, criteria, undefined, useSpeckit);
-      const { output: planOutput, exitCode: planExit } = await runClaudePhase(workDir, model, planPrompt, taskId, q, getWindow, controller, 600000, extraEnv);
+      const { output: planOutput, exitCode: planExit } = await runAgentPhase(db, task.project_id, 1, {
+        projectPath: workDir, model, prompt: planPrompt, taskId, q, getWindow, controller, timeoutMs: 600000, extraEnv,
+      });
 
       if (planExit !== 0) {
         q.updateTaskStatus.run('failed', taskId);
@@ -302,8 +313,8 @@ export async function orchestrateSddWorkflow(
         // Install dependencies in worktree (symlink node_modules when possible)
         await setupWorktreeDepsWithSymlink(workDir, projectPath, taskId, projectName, q, getWindow);
 
-        // Re-read CLAUDE.md from worktree
-        projectDescription = readClaudeMd(workDir) || task.project_description || '';
+        // Re-read AGENT.md from worktree
+        projectDescription = readAgentMd(workDir) || task.project_description || '';
 
         // V3: Detect conflicts with other active worktrees
         try {
@@ -338,7 +349,7 @@ export async function orchestrateSddWorkflow(
     if (startPhase <= 2) {
       checkAborted(controller);
       q.updateTaskLastPhase.run(2, taskId);
-      await runSimplePhase(2, 'implementing', taskId, task, workDir, projectName, projectDescription, model, knowledge, criteria, q, getWindow, controller, useSpeckit, extraEnv);
+      await runSimplePhase(2, 'implementing', taskId, task, workDir, projectName, projectDescription, model, knowledge, criteria, q, getWindow, controller, useSpeckit, extraEnv, db);
       await fireHook('on:implement_complete', { ...hookCtx, phase: 2, phaseLabel: 'implementing' }, db);
     }
 
@@ -359,7 +370,9 @@ export async function orchestrateSddWorkflow(
         await fireHook('on:review_started', { ...hookCtx, phase: 3, phaseLabel: 'reviewing', reviewLoop }, db);
 
         const prompt = buildPhasePrompt(3, task, projectDescription, knowledge, criteria, reviewLoop, useSpeckit);
-        const { output, exitCode } = await runClaudePhase(workDir, model, prompt, taskId, q, getWindow, controller, 900000, extraEnv);
+        const { output, exitCode } = await runAgentPhase(db, task.project_id, 3, {
+          projectPath: workDir, model, prompt, taskId, q, getWindow, controller, timeoutMs: 900000, extraEnv,
+        });
 
         if (exitCode !== 0) {
           q.updateTaskStatus.run('failed', taskId);
@@ -396,7 +409,9 @@ export async function orchestrateSddWorkflow(
 
             const issuesText = (parsed.issues || []).map((i) => `- [${i.category}] ${i.description}`).join('\n');
             const fixPrompt = buildFixPrompt(task, projectDescription, knowledge, criteria, issuesText);
-            const fixResult = await runClaudePhase(workDir, model, fixPrompt, taskId, q, getWindow, controller, 900000, extraEnv);
+            const fixResult = await runAgentPhase(db, task.project_id, 3, {
+              projectPath: workDir, model, prompt: fixPrompt, taskId, q, getWindow, controller, timeoutMs: 900000, extraEnv,
+            });
 
             if (fixResult.exitCode !== 0) {
               q.updateTaskStatus.run('failed', taskId);
@@ -442,7 +457,9 @@ export async function orchestrateSddWorkflow(
       await fireHook('on:ship_started', { ...hookCtx, phase: 4, phaseLabel: 'shipping' }, db);
 
       const prompt = buildPhasePrompt(4, task, projectDescription, knowledge, criteria, undefined, useSpeckit);
-      const { output, exitCode } = await runClaudePhase(workDir, model, prompt, taskId, q, getWindow, controller, 600000, extraEnv);
+      const { output, exitCode } = await runAgentPhase(db, task.project_id, 4, {
+        projectPath: workDir, model, prompt, taskId, q, getWindow, controller, timeoutMs: 600000, extraEnv,
+      });
 
       if (exitCode !== 0) {
         await fireHook('on:ship_failed', { ...hookCtx, phase: 4, phaseLabel: 'shipping', error: 'Ship phase failed' }, db);
@@ -553,7 +570,8 @@ export async function runSimplePhase(
   getWindow: GetWindow,
   controller: AbortController,
   useSpeckit?: boolean,
-  extraEnv?: Record<string, string | undefined>
+  extraEnv?: Record<string, string | undefined>,
+  db?: Database.Database
 ) {
   q.updateTaskStatus.run(statusLabel, taskId);
   sendPhaseUpdate(getWindow, { taskId, phase: phaseNum, phaseLabel: statusLabel, status: 'started' });
@@ -561,7 +579,11 @@ export async function runSimplePhase(
 
   const phaseTimeouts: Record<number, number> = { 1: 600000, 2: 1800000 };
   const prompt = buildPhasePrompt(phaseNum, task, projectDescription, knowledge, criteria, undefined, useSpeckit);
-  const { exitCode } = await runClaudePhase(projectPath, model, prompt, taskId, q, getWindow, controller, phaseTimeouts[phaseNum] || 600000, extraEnv);
+  const timeoutMs = phaseTimeouts[phaseNum] || 600000;
+
+  const { exitCode } = await runAgentPhase(db!, task.project_id, phaseNum, {
+    projectPath, model, prompt, taskId, q, getWindow, controller, timeoutMs, extraEnv,
+  });
 
   if (exitCode !== 0) {
     q.updateTaskStatus.run('failed', taskId);

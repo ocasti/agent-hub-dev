@@ -42,6 +42,8 @@ Plugins do NOT contain application code that runs inside Agent Hub (except Level
 
 The MCP (Model Context Protocol) is the universal transport layer. If a service has an MCP server, it can be integrated as a plugin.
 
+> **Multi-Agent Note (v2.0.0+):** Agent Hub supports 15 AI agent CLIs (Claude, Gemini, Codex, Copilot, etc.). Plugins interact with **agent-agnostic workflow hooks** — the same hooks fire regardless of which AI agent executes the phase. Plugin developers do NOT need to handle different agents; the adapter layer is transparent to the plugin system.
+
 ---
 
 ## Plugin Architecture

@@ -35,7 +35,7 @@ export default function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [logs, setLogs] = useState<Log[]>([]);
-  const [settings, setSettings] = useState<Settings>({ maxConcurrent: 3, defaultModel: 'sonnet', maxReviewLoops: 5, theme: 'light', locale: 'en', threadMaxFiles: 5, threadMaxLines: 150, postFixLinesPerComment: 50, postFixFilesPerComment: 3, testTimeoutMin: 5, testFixRetries: 3 });
+  const [settings, setSettings] = useState<Settings>({ maxConcurrent: 3, defaultModel: 'sonnet', defaultAiAgent: 'claude', maxReviewLoops: 5, theme: 'light', locale: 'en', threadMaxFiles: 5, threadMaxLines: 150, postFixLinesPerComment: 50, postFixFilesPerComment: 3, testTimeoutMin: 5, testFixRetries: 3 });
   const [agents, setAgents] = useState<Map<string, ActiveAgent>>(new Map());
   const [confirm, setConfirm] = useState<ConfirmState>(CONFIRM_INITIAL);
   const [pendingEditTaskId, setPendingEditTaskId] = useState<string | null>(null);
@@ -44,7 +44,7 @@ export default function App() {
   const [showAbout, setShowAbout] = useState(false);
   // License & Updates
   const [licensePlan, setLicensePlan] = useState<TierName>('free');
-  const [licenseLimits, setLicenseLimits] = useState<LicenseLimits>({ max_projects: 2, max_concurrent: 1, can_configure_agents: false, max_review_loops: 2, can_configure_review_loops: false, models: ['sonnet'], max_knowledge: 20, community_plugins: false, max_parallel_per_project: 1 });
+  const [licenseLimits, setLicenseLimits] = useState<LicenseLimits>({ max_projects: 2, max_concurrent: 1, can_configure_agents: false, max_review_loops: 2, can_configure_review_loops: false, models: ['sonnet'], max_knowledge: 20, community_plugins: false, max_parallel_per_project: 1, multi_agent_mode: 'global_only' });
   const [loginModalOpen, setLoginModalOpen] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
@@ -555,7 +555,7 @@ export default function App() {
   const handleLogout = useCallback(async () => {
     await ipc.logout();
     setLicensePlan('free');
-    setLicenseLimits({ max_projects: 2, max_concurrent: 1, can_configure_agents: false, max_review_loops: 2, can_configure_review_loops: false, models: ['sonnet'], max_knowledge: 20, community_plugins: false, max_parallel_per_project: 1 });
+    setLicenseLimits({ max_projects: 2, max_concurrent: 1, can_configure_agents: false, max_review_loops: 2, can_configure_review_loops: false, models: ['sonnet'], max_knowledge: 20, community_plugins: false, max_parallel_per_project: 1, multi_agent_mode: 'global_only' });
     await loadSettings();
   }, []);
 
@@ -681,7 +681,7 @@ export default function App() {
         onFixTests={handleFixTests}
       />
     ),
-    projects: <ProjectsView key={viewKey} projects={projects} onSave={handleSaveProject} onDelete={handleDeleteProject} onAnalyzeRepo={handleAnalyzeRepo} analyzingProjectId={analyzingProjectId} />,
+    projects: <ProjectsView key={viewKey} projects={projects} onSave={handleSaveProject} onDelete={handleDeleteProject} onAnalyzeRepo={handleAnalyzeRepo} analyzingProjectId={analyzingProjectId} licensePlan={licensePlan} multiAgentMode={licenseLimits.multi_agent_mode} />,
     workflow: <WorkflowView />,
     plugins: <PluginsView licenseLimits={licenseLimits} onOpenLogin={() => setLoginModalOpen(true)} />,
     skills: <SkillsView projects={projects} onUpdateProject={handleUpdateProject} />,
@@ -692,7 +692,7 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100 overflow-hidden">
-      <Sidebar view={view} setView={setView} counts={counts} licensePlan={licensePlan} onUpgrade={handleUpgrade} />
+      <Sidebar view={view} setView={setView} counts={counts} licensePlan={licensePlan} userName={settings.licenseUsername || settings.licenseEmail} onUpgrade={handleUpgrade} />
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Draggable title bar region for main content area */}
         <div className="h-8 flex-shrink-0 titlebar-drag" />

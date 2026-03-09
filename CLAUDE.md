@@ -50,10 +50,16 @@ agent-hub/
 │   │   │   ├── git-ops.ts         # Branch, commit, push operations
 │   │   │   ├── pr-feedback.ts     # Fetch & Fix cycle (via code-hosting adapter)
 │   │   │   ├── test-runner.ts     # Native test detection & execution
-│   │   │   ├── repo-analysis.ts   # Project analysis & CLAUDE.md reading
+│   │   │   ├── repo-analysis.ts   # Project analysis & AGENT.md generation
 │   │   │   ├── state.ts           # Resolver maps & helpers
 │   │   │   ├── worktree.ts        # Git worktree management (create, remove, symlink, merge, conflicts)
 │   │   │   ├── types.ts           # Shared interfaces & constants
+│   │   │   └── agents/            # Multi-agent adapter system
+│   │   │       ├── types.ts       # AgentAdapter interface, AgentRunOptions
+│   │   │       ├── claude-adapter.ts  # Claude Code CLI adapter
+│   │   │       ├── generic-adapter.ts # Config-driven adapter for all other CLIs
+│   │   │       ├── registry.ts    # Agent registry, resolution, failover
+│   │   │       └── index.ts       # Re-exports + auto-registration
 │   │   │   └── adapters/          # Code hosting adapter pattern
 │   │   │       ├── types.ts       # CodeHostingAdapter interface
 │   │   │       ├── github.ts      # GitHub adapter (gh CLI)
@@ -188,6 +194,33 @@ All hooks are fired via `fireHook()` from the plugin engine. Plugins subscribe t
 - `on:pr_changes_requested` — reviewer left comments (with commentCount)
 - `on:pr_fix_pushed` — fixes pushed after review cycle (with reviewLoop)
 - `on:pr_approved` — user approved the push (with prNumber)
+
+## Multi-Agent Adapter System
+
+Agent Hub supports multiple AI CLI agents via an adapter pattern. The orchestrator resolves which agent to use per phase based on tier and configuration.
+
+### Supported Agents (confirmed CLI non-interactive mode)
+Claude Code, Gemini CLI, Codex CLI, GitHub Copilot, Kiro CLI, Qwen Code, opencode, Amp, Mistral Vibe, Kilo Code, CodeBuddy CLI, Qoder CLI.
+Experimental: Cursor Agent, Roo Code, IBM Bob.
+
+### Tier Rules
+- **Free**: One global agent for ALL projects. Changing it updates every project.
+- **Registered**: Global default + per-project override (single agent per project).
+- **Premium**: Per-phase primary + fallback with automatic failover.
+
+### Agent Resolution Flow
+```
+resolveAgentForPhase(db, projectId, phase):
+  Free:       settings.default_ai_agent → 'claude'
+  Registered: project.ai_agent → settings.default_ai_agent → 'claude'
+  Premium:    project.ai_agent_phases[phase] → project.ai_agent → settings.default_ai_agent → 'claude'
+```
+
+### Key Files
+- `electron/ipc/agent/agents/types.ts` — AgentAdapter interface
+- `electron/ipc/agent/agents/registry.ts` — Resolution + failover logic
+- `electron/ipc/agent/agents/claude-adapter.ts` — Claude-specific adapter
+- `electron/ipc/agent/agents/generic-adapter.ts` — Config-driven adapter for all other agents
 
 ## Skills — Two Levels
 

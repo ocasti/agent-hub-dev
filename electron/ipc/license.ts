@@ -16,6 +16,8 @@ export interface LicenseLimits {
   max_knowledge: number;
   community_plugins: boolean;
   max_parallel_per_project: number;
+  /** 'global_only' = one agent for all projects, 'per_project' = override per project, 'per_phase' = per-phase primary+fallback */
+  multi_agent_mode: 'global_only' | 'per_project' | 'per_phase';
 }
 
 const TIER_LIMITS: Record<TierName, LicenseLimits> = {
@@ -29,6 +31,7 @@ const TIER_LIMITS: Record<TierName, LicenseLimits> = {
     max_knowledge: 20,
     community_plugins: false,
     max_parallel_per_project: 1,
+    multi_agent_mode: 'global_only',
   },
   registered: {
     max_projects: 5,
@@ -40,6 +43,7 @@ const TIER_LIMITS: Record<TierName, LicenseLimits> = {
     max_knowledge: 50,
     community_plugins: true,
     max_parallel_per_project: 1,
+    multi_agent_mode: 'per_project',
   },
   premium: {
     max_projects: 999999,
@@ -51,6 +55,7 @@ const TIER_LIMITS: Record<TierName, LicenseLimits> = {
     max_knowledge: 999999,
     community_plugins: true,
     max_parallel_per_project: 3,
+    multi_agent_mode: 'per_phase',
   },
 };
 

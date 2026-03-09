@@ -11,6 +11,7 @@ import { getEffectiveMaxConcurrent, getMaxParallelPerProject } from '../license'
 import { cleanEnv, execFileAsync } from './claude-cli';
 import { runRepoAnalysis } from './repo-analysis';
 import { orchestrateSddWorkflow } from './orchestrator';
+import { initRegistry, getInstalledAgents, getAllAgents, checkSpeckitForAgent } from './agents';
 import { runFetchAndFix, runFetchAndFixPushOnly } from './pr-feedback';
 import { runTestFixLoop } from './test-runner';
 import { fireHook } from '../plugins/engine';
@@ -25,6 +26,23 @@ export function registerAgentHandlers(
   getWindow: () => BrowserWindow | null
 ) {
   const q = createQueries(db);
+
+  // Initialize the multi-agent registry (Claude + all generic adapters)
+  initRegistry();
+
+  // ── Get Installed Agents ──────────────────────────────────────────────────
+  ipcMain.handle('agent:getInstalledAgents', async () => {
+    const installed = await getInstalledAgents();
+    const agents = getAllAgents().map((a) => ({
+      id: a.id,
+      name: a.name,
+      binary: a.binary,
+      version: installed[a.id] || null,
+      installed: !!installed[a.id],
+      speckitInstalled: checkSpeckitForAgent(a.id),
+    }));
+    return agents;
+  });
 
   // ── Run Agent (start or fetch_fix) ─────────────────────────────────────────
   ipcMain.handle('agent:run', async (_event, taskId: string, phase?: string) => {
@@ -306,28 +324,24 @@ Generate clear, testable acceptance criteria:
 IMPORTANT: Output ONLY the acceptance criteria, one per line. No headings, no numbering, no markdown. Just the criteria text.`;
     }
 
-    const modelFlag = 'sonnet';
-    const output = await new Promise<string>((resolve, reject) => {
-      const child = spawn('claude', ['--model', modelFlag, '--print'], {
-        cwd: projectPath,
-        env: cleanEnv(),
-        shell: false,
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
-      let stdout = '';
-      let stderr = '';
-      child.stdout?.on('data', (d: Buffer) => { stdout += d.toString(); });
-      child.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
-      child.on('close', (code: number | null) => {
-        if (code === 0 && stdout.trim()) resolve(stdout.trim());
-        else reject(new Error(stderr.trim() || `Claude exited with code ${code}`));
-      });
-      child.on('error', (err) => reject(new Error(`Spawn error: ${err.message}`)));
+    // Use the project's configured agent (or global default) for refine
+    const { resolveAgentForPhase } = await import('./agents');
+    const { primary } = resolveAgentForPhase(db, context.projectId, 0);
+    console.log(`[refineWithAI] Using agent: ${primary.name} (${primary.id})`);
 
-      // Send prompt via stdin to avoid shell escaping / arg length issues
-      child.stdin?.write(prompt);
-      child.stdin?.end();
+    const refineQ = createQueries(db);
+    const refineController = new AbortController();
+    const { output: rawOutput } = await primary.runPhase({
+      projectPath,
+      model: 'sonnet',
+      prompt,
+      taskId: null as unknown as string, // null taskId — not tied to a task (FK-safe)
+      q: refineQ,
+      getWindow,
+      controller: refineController,
+      timeoutMs: 120000,
     });
+    const output = rawOutput.trim();
 
     return output;
   });
@@ -337,33 +351,41 @@ IMPORTANT: Output ONLY the acceptance criteria, one per line. No headings, no nu
     const project = q.getProject.get(projectId) as { id: string; name: string; path: string; repo: string | null; description: string; optional_skills: string } | undefined;
     if (!project) throw new Error(`Project ${projectId} not found`);
 
-    console.log(`[analyzeRepo] Starting analysis for project "${project.name}" at ${project.path}`);
+    // Resolve which agent will be used for the analysis
+    const { resolveAgentForPhase } = await import('./agents');
+    const { primary } = resolveAgentForPhase(db, projectId, 0);
 
     // Read active skills for the project
     const skills = readSettingSources(join(project.path, '.claude', 'settings.json'));
 
-    // Check if CLAUDE.md already exists (merge mode)
-    const claudeMdPath = join(project.path, 'CLAUDE.md');
-    const existingClaudeMd = existsSync(claudeMdPath) ? readFileSync(claudeMdPath, 'utf-8') : undefined;
-    const mode = existingClaudeMd ? 'merge' : 'create';
+    // Check if AGENT.md (or legacy CLAUDE.md) already exists → merge mode
+    const agentMdPath = join(project.path, 'AGENT.md');
+    const legacyClaudeMdPath = join(project.path, 'CLAUDE.md');
+    let existingAgentMd: string | undefined;
+    if (existsSync(agentMdPath)) {
+      existingAgentMd = readFileSync(agentMdPath, 'utf-8');
+    } else if (existsSync(legacyClaudeMdPath)) {
+      existingAgentMd = readFileSync(legacyClaudeMdPath, 'utf-8');
+    }
+    const mode = existingAgentMd ? 'merge' : 'create';
 
-    console.log(`[analyzeRepo] Mode: ${mode}, skills: ${skills.length}`);
-    const result = await runRepoAnalysis(project.path, existingClaudeMd, skills);
-    console.log(`[analyzeRepo] Analysis complete. Description: ${result.shortDescription.length} chars, CLAUDE.md: ${result.claudeMdContent.length} chars`);
+    sendLog(q, getWindow, null, project.name, `Analyze Repo started (${mode} mode) using agent: ${primary.name} (${primary.id})`, 'info');
 
-    // Write CLAUDE.md to project root
+    const result = await runRepoAnalysis(project.path, existingAgentMd, skills, db, projectId);
+
+    // Write AGENT.md to project root
     try {
-      writeFileSync(claudeMdPath, result.claudeMdContent, 'utf-8');
-      console.log(`[analyzeRepo] CLAUDE.md written to ${claudeMdPath}`);
+      writeFileSync(agentMdPath, result.agentMdContent, 'utf-8');
+      sendLog(q, getWindow, null, project.name, `AGENT.md ${mode === 'merge' ? 'updated' : 'created'} successfully (${result.agentMdContent.length} chars)`, 'ok');
     } catch (err) {
-      console.error(`[analyzeRepo] Failed to write CLAUDE.md: ${(err as Error).message}. Saving to DB as fallback.`);
+      sendLog(q, getWindow, null, project.name, `Failed to write AGENT.md: ${(err as Error).message}. Saving to DB as fallback.`, 'error');
       // Fallback: save full content to DB description
-      q.updateProject.run(project.name, project.path, project.repo, result.claudeMdContent, project.optional_skills, (project as Record<string, unknown>).test_command ?? '', (project as Record<string, unknown>).code_hosting ?? null, (project as Record<string, unknown>).code_hosting_config ?? '{}', (project as Record<string, unknown>).plugin_pm ?? null, (project as Record<string, unknown>).plugin_pm_config ?? '{}', project.id);
+      q.updateProject.run(project.name, project.path, project.repo, result.agentMdContent, project.optional_skills, (project as Record<string, unknown>).test_command ?? '', (project as Record<string, unknown>).code_hosting ?? null, (project as Record<string, unknown>).code_hosting_config ?? '{}', (project as Record<string, unknown>).plugin_pm ?? null, (project as Record<string, unknown>).plugin_pm_config ?? '{}', (project as Record<string, unknown>).ai_agent ?? 'claude', (project as Record<string, unknown>).ai_agent_phases ?? '{}', project.id);
       return result.shortDescription;
     }
 
     // Save short description to DB
-    q.updateProject.run(project.name, project.path, project.repo, result.shortDescription, project.optional_skills, (project as Record<string, unknown>).test_command ?? '', (project as Record<string, unknown>).code_hosting ?? null, (project as Record<string, unknown>).code_hosting_config ?? '{}', (project as Record<string, unknown>).plugin_pm ?? null, (project as Record<string, unknown>).plugin_pm_config ?? '{}', project.id);
+    q.updateProject.run(project.name, project.path, project.repo, result.shortDescription, project.optional_skills, (project as Record<string, unknown>).test_command ?? '', (project as Record<string, unknown>).code_hosting ?? null, (project as Record<string, unknown>).code_hosting_config ?? '{}', (project as Record<string, unknown>).plugin_pm ?? null, (project as Record<string, unknown>).plugin_pm_config ?? '{}', (project as Record<string, unknown>).ai_agent ?? 'claude', (project as Record<string, unknown>).ai_agent_phases ?? '{}', project.id);
 
     return result.shortDescription;
   });
@@ -371,25 +393,44 @@ IMPORTANT: Output ONLY the acceptance criteria, one per line. No headings, no nu
   // ── Health Check ───────────────────────────────────────────────────────────
   ipcMain.handle('agent:healthCheck', async () => {
     const results: {
-      claudeInstalled: boolean;
-      claudeVersion?: string;
+      aiAgentReady: boolean;
+      aiAgentName?: string;
+      aiAgentCount: number;
       gitInstalled: boolean;
-      specifyInstalled: boolean;
+      specifyCliInstalled: boolean;
+      specifyCliVersion?: string;
       pluginClis: { name: string; installed: boolean; version?: string; pluginName: string }[];
+      agents: { id: string; name: string; binary: string; installed: boolean; version: string | null; speckitInstalled: boolean }[];
     } = {
-      claudeInstalled: false,
-      claudeVersion: undefined,
+      aiAgentReady: false,
+      aiAgentName: undefined,
+      aiAgentCount: 0,
       gitInstalled: false,
-      specifyInstalled: false,
+      specifyCliInstalled: false,
+      specifyCliVersion: undefined,
       pluginClis: [],
+      agents: [],
     };
 
-    try {
-      const claudeVersion = await execFileAsync('claude', ['--version']);
-      results.claudeInstalled = true;
-      results.claudeVersion = claudeVersion.trim();
-    } catch {
-      // not installed
+    // Check all registered AI agents
+    const installed = await getInstalledAgents();
+    results.agents = getAllAgents().map((a) => ({
+      id: a.id,
+      name: a.name,
+      binary: a.binary,
+      installed: !!installed[a.id],
+      version: installed[a.id] || null,
+      speckitInstalled: checkSpeckitForAgent(a.id),
+    }));
+
+    // AI Agent ready = at least one agent installed
+    const readyAgents = results.agents.filter((a) => a.installed);
+    results.aiAgentCount = readyAgents.length;
+    if (readyAgents.length > 0) {
+      results.aiAgentReady = true;
+      results.aiAgentName = readyAgents.length === 1
+        ? readyAgents[0].name
+        : `${readyAgents.length} agents`;
     }
 
     try {
@@ -399,10 +440,16 @@ IMPORTANT: Output ONLY the acceptance criteria, one per line. No headings, no nu
       // not installed
     }
 
-    {
-      const home = process.env.HOME || '';
-      const globalSpeckit = join(home, '.claude', 'commands', 'speckit.specify.md');
-      results.specifyInstalled = existsSync(globalSpeckit);
+    // Check if specify CLI is installed (the tool that configures SDD Kit per agent)
+    // specify uses subcommand `version`, not `--version`
+    try {
+      const specifyOutput = await execFileAsync('specify', ['version'], undefined, 10000);
+      results.specifyCliInstalled = true;
+      // Extract version from rich output: "CLI Version    0.0.22"
+      const vMatch = specifyOutput.match(/CLI Version\s+([\d.]+)/);
+      results.specifyCliVersion = vMatch ? `v${vMatch[1]}` : undefined;
+    } catch {
+      // not installed
     }
 
     // Dynamically check CLI requirements from installed plugins

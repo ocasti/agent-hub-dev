@@ -69,7 +69,7 @@ export interface FetchedPrFeedback {
 
 export interface AnalysisResult {
   shortDescription: string;  // 1-2 sentences for DB
-  claudeMdContent: string;   // Full CLAUDE.md content
+  agentMdContent: string;    // Full AGENT.md content
 }
 
 export type ThreadPromptInput =

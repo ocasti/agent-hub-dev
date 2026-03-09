@@ -7,7 +7,7 @@ Official plugin registry for [Agent Hub](https://github.com/agenthub-dev/agent-h
 | Plugin | Type | Description |
 |--------|------|-------------|
 | [github](plugins/github/) | Level 2 (Code Hosting) | Git operations, PRs, and code review via GitHub CLI |
-| [pm-tool](plugins/pm-tool/) | Level 1 (MCP) | Sync tasks with PM Tool (Codebranch) |
+| [pm-tool](plugins/pm-tool/) | Level 1 (MCP) | Sync tasks with PM tools (Jira, Linear, Asana, etc.) |
 
 ## Contributing a Plugin
 

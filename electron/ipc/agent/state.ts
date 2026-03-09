@@ -13,7 +13,7 @@ export const fixTestsResolvers = new Map<string, (value: void) => void>();
 export function sendLog(
   q: Queries,
   getWindow: GetWindow,
-  taskId: string,
+  taskId: string | null,
   projectName: string,
   message: string,
   kind: string
@@ -22,6 +22,8 @@ export function sendLog(
   if (win) {
     win.webContents.send('agent:log', { taskId, projectName, message, kind });
   }
+  // taskId may be null for operations not tied to a task (e.g. analyzeRepo, refineWithAI).
+  // Use null for DB insert to satisfy FK constraint (logs.task_id allows NULL).
   q.insertLog.run(taskId, projectName, message, kind);
 }
 

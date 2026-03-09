@@ -43,6 +43,12 @@ images/
 *.log
 npm-debug.log*
 
+# Internal planning docs (not for repo)
+docs/PLAN-*.md
+
+# Internal planning docs (not for repo)
+docs/PLAN-*.md
+
 # Electron packaging artifacts
 *.dmg
 *.AppImage

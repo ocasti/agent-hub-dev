@@ -1,8 +1,8 @@
-# SPEC.md — Agent Hub v1.0
+# SPEC.md — Agent Hub v2.0
 
 ## Overview
 
-Agent Hub is a desktop application (Electron) that orchestrates SDD development using Claude Code CLI. It allows creating projects, defining tasks with specs, running agents that follow the SDD cycle, and learning from code reviews.
+Agent Hub is a desktop application (Electron) that orchestrates SDD development using multiple AI agent CLIs (Claude Code, Gemini, Codex, Copilot, and 11 more). It allows creating projects, defining tasks with specs, running agents that follow the SDD cycle, and learning from code reviews.
 
 ## Features
 
@@ -83,24 +83,33 @@ type TaskStatus =
   | 'failed';
 ```
 
-### F3: Agent Execution (Claude Code CLI)
+### F3: Agent Execution (Multi-Agent Adapter System)
 
-**Description**: Run Claude Code CLI as a subprocess with cwd set to the project path. Real-time output streaming.
+**Description**: Run AI agent CLIs as subprocesses with cwd set to the project path. Supports 19+ agent CLIs via adapter pattern with tier-based configuration.
 
 **Acceptance Criteria**:
-- Execute `claude` CLI with the constructed prompt (spec + criteria + knowledge + project context)
+- Execute any supported AI agent CLI with the constructed prompt
 - Stream stdout line by line to the renderer via IPC
 - Concurrency control (max simultaneous agents, configurable)
 - Handle the 6 SDD workflow phases
 - Phase 0 (Spec Review): analyze spec, pause if incomplete with suggestions
 - Phase 5 (PR Feedback): pause after Ship, manual buttons
-- Health check on startup (claude --version, gh --version)
-- Model selection (sonnet/opus) per task
+- Health check on startup detects all installed agent CLIs
+- Model selection (sonnet/opus) per task (Claude); other agents use their defaults
+- **Tier-based agent scope**:
+  - Free: one global agent for ALL projects (changing updates every project)
+  - Registered: global default + per-project override
+  - Premium: per-phase primary + fallback with automatic failover
+- **Automatic failover** (Premium): if primary agent fails, retries with fallback
 
-**Base command**:
+**Supported agents**: Claude Code, Gemini CLI, Codex CLI, GitHub Copilot, Kiro CLI, Qwen Code, opencode, Amp, Mistral Vibe, Kilo Code, CodeBuddy CLI, Qoder CLI. Experimental: Cursor Agent, Roo Code, IBM Bob.
+
+**Base command** (varies by agent):
 ```bash
-claude --model claude-sonnet-4-5-20250929 --print "prompt..."
-# Executed with cwd = project.path
+claude --model opus --print --permission-mode bypassPermissions  # Claude
+gemini --non-interactive                                          # Gemini
+codex --quiet                                                     # Codex
+# All agents receive prompts via stdin
 ```
 
 ### F4: Skills Management
@@ -176,8 +185,10 @@ claude --model claude-sonnet-4-5-20250929 --print "prompt..."
 - Max concurrent agents (1-5)
 - Default model (sonnet/opus)
 - Max review loops (1-10)
-- Health check: claude CLI, gh CLI, git status
+- Health check: all installed agent CLIs, gh CLI, git status
 - Environment info: core skills, DB path
+- **AI Agent section**: global/default agent selector, installed agents list with version/status
+- **Tier-aware labels**: "AI Agent" (free, applies to all) vs "Default AI Agent" (registered+, affects new projects only)
 
 ## Visual Design
 

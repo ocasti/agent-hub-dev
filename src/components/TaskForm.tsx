@@ -212,7 +212,7 @@ export default function TaskForm({ projects, task, licenseLimits, onSave, onCanc
                 if (cancelled) return;
                 setFieldStates((prev) => ({
                   ...prev,
-                  [f.key]: { ...prev[f.key], options: items, loading: false },
+                  [f.key]: { ...prev[f.key], options: items as SelectOption[], loading: false },
                 }));
               })
               .catch(() => {

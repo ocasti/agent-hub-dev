@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { Settings, HealthStatus, LicenseLimits, TierName, NotificationsConfig, NotificationKey } from '../lib/types';
+import type { Settings, HealthStatus, InstalledAgent, LicenseLimits, TierName, NotificationsConfig, NotificationKey } from '../lib/types';
 import { CORE_SKILLS } from '../lib/skills';
 import * as ipc from '../lib/ipc';
 import { IconSun, IconMoon, IconLock, IconTrash } from './ui/Icons';
@@ -34,11 +34,15 @@ export default function SettingsView({ settings, onUpdate, onReloadSettings, lic
   const [refreshDone, setRefreshDone] = useState(false);
   const [notifConfig, setNotifConfig] = useState<NotificationsConfig | null>(null);
   const [appVersion, setAppVersion] = useState('');
+  const [installedAgents, setInstalledAgents] = useState<InstalledAgent[]>([]);
+  const [loadingAgents, setLoadingAgents] = useState(false);
 
   useEffect(() => {
     ipc.healthCheck().then(setHealth).catch(() => {});
     ipc.getNotificationsConfig().then(setNotifConfig).catch(() => {});
     ipc.getAppVersion().then(setAppVersion).catch(() => {});
+    setLoadingAgents(true);
+    ipc.getInstalledAgents().then(setInstalledAgents).catch(() => {}).finally(() => setLoadingAgents(false));
   }, []);
 
   const updateNotifConfig = (updated: NotificationsConfig) => {
@@ -215,6 +219,63 @@ export default function SettingsView({ settings, onUpdate, onReloadSettings, lic
               }`}
             />
           </button>
+        </div>
+      </div>
+
+      {/* AI Agent */}
+      <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl p-6 space-y-4">
+        <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">
+          {t('agent.sectionTitle', 'AI Agent')}
+        </h4>
+        <div>
+          <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1.5">
+            {licensePlan === 'free'
+              ? t('agent.labelGlobal', 'AI Agent')
+              : t('agent.labelDefault', 'Default AI Agent')}
+          </label>
+          <select
+            value={settings.defaultAiAgent || 'claude'}
+            onChange={(e) => onUpdate('default_ai_agent', e.target.value)}
+            className="w-full max-w-xs border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+          >
+            {installedAgents.filter((a) => a.installed).map((a) => (
+              <option key={a.id} value={a.id}>{a.name}</option>
+            ))}
+            {/* Show all agents if none installed yet */}
+            {installedAgents.filter((a) => a.installed).length === 0 && (
+              <option value="claude">Claude Code</option>
+            )}
+          </select>
+          <p className="text-xs text-gray-400 mt-1.5">
+            {licensePlan === 'free'
+              ? t('agent.helpFree', 'This agent is used for ALL your projects. Changing it will update every project.')
+              : t('agent.helpDefault', 'Used as default when creating new projects. Each project can override this.')}
+          </p>
+        </div>
+
+        {/* Installed Agents list */}
+        <div className="pt-3 border-t border-gray-100 dark:border-gray-700">
+          <h5 className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
+            {t('agent.installedTitle', 'Installed Agents')}
+          </h5>
+          {loadingAgents ? (
+            <p className="text-xs text-gray-400">{t('agent.checking', 'Checking...')}</p>
+          ) : (
+            <div className="grid grid-cols-2 gap-x-6 gap-y-1.5">
+              {[...installedAgents].sort((a, b) => (a.installed === b.installed ? 0 : a.installed ? -1 : 1)).map((a) => (
+                <div key={a.id} className="flex items-center gap-2 min-w-0">
+                  <span className={`w-2 h-2 shrink-0 rounded-full ${a.installed ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-gray-600'}`} />
+                  <span className={`text-sm truncate ${a.installed ? 'text-gray-700 dark:text-gray-300' : 'text-gray-400 dark:text-gray-500'}`}>{a.name}</span>
+                  {a.version && <span className="text-xs text-gray-400 font-mono shrink-0">{a.version}</span>}
+                  <span className={`text-xs shrink-0 ${a.installed ? (a.speckitInstalled ? 'text-emerald-500' : 'text-amber-500') : 'text-gray-400'}`}>
+                    {a.installed
+                      ? (a.speckitInstalled ? t('agent.ready', 'Ready') : t('agent.noSddKit', 'No SDD Kit'))
+                      : t('agent.notInstalled', 'Not installed')}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -465,18 +526,22 @@ export default function SettingsView({ settings, onUpdate, onReloadSettings, lic
             <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">{t('healthCheck.title')}</h4>
             <div className="space-y-2">
               <div className="flex items-center gap-2">
-                <span className={`w-2 h-2 rounded-full ${health.claudeInstalled ? 'bg-emerald-500' : 'bg-red-500'}`} />
-                <span className="text-sm text-gray-600 dark:text-gray-400">Claude Code CLI</span>
-                {health.claudeVersion && <span className="text-xs text-gray-400">{health.claudeVersion}</span>}
+                <span className={`w-2 h-2 rounded-full ${health.aiAgentReady ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                <span className="text-sm text-gray-600 dark:text-gray-400">{t('healthCheck.aiAgent', 'AI Agent')}</span>
+                {health.aiAgentReady
+                  ? <span className="text-xs text-gray-400">{health.aiAgentName}</span>
+                  : <span className="text-xs text-red-500">{t('healthCheck.noAgent', 'No AI agent installed')}</span>}
               </div>
               <div className="flex items-center gap-2">
                 <span className={`w-2 h-2 rounded-full ${health.gitInstalled ? 'bg-emerald-500' : 'bg-red-500'}`} />
                 <span className="text-sm text-gray-600 dark:text-gray-400">Git</span>
               </div>
               <div className="flex items-center gap-2">
-                <span className={`w-2 h-2 rounded-full ${health.specifyInstalled ? 'bg-emerald-500' : 'bg-red-500'}`} />
-                <span className="text-sm text-gray-600 dark:text-gray-400">{t('healthCheck.specKit')}</span>
-                {!health.specifyInstalled && <span className="text-xs text-red-500">{t('healthCheck.specKitRequired')}</span>}
+                <span className={`w-2 h-2 rounded-full ${health.specifyCliInstalled ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                <span className="text-sm text-gray-600 dark:text-gray-400">{t('healthCheck.specifyCli', 'Specify CLI (SDD Kit)')}</span>
+                {health.specifyCliInstalled
+                  ? <span className="text-xs text-gray-400">{health.specifyCliVersion || t('agent.ready', 'Ready')}</span>
+                  : <span className="text-xs text-amber-500">{t('healthCheck.specifyCliMissing', 'uv tool install specify-cli')}</span>}
               </div>
               {health.pluginClis?.length > 0 && health.pluginClis.map((cli) => (
                 <div key={cli.name} className="flex items-center gap-2">

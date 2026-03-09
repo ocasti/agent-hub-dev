@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import type { TaskRow, Queries, GetWindow } from './types';
 import { activeControllers, sendLog, sendPhaseUpdate, checkAborted, getSettingValue } from './state';
-import { runClaudePhase } from './claude-cli';
+import { runAgentPhase } from './agents';
 
 // ── Native Test Runner ──────────────────────────────────────────────────────────
 
@@ -96,10 +96,12 @@ export async function runNativeTests(
 
 // ── Standalone Test Fix Loop (for agent:fixTests fallback) ──────────────────────
 
+import type Database from 'better-sqlite3';
+
 export async function runTestFixLoop(
   taskId: string,
   q: Queries,
-  _db: unknown,
+  db: Database.Database,
   getWindow: GetWindow
 ) {
   const controller = new AbortController();
@@ -144,7 +146,9 @@ Test output (last 3000 chars):
 ${testResult.output}
 
 Fix the test failures and ensure all tests pass.`;
-      await runClaudePhase(workDir, model, fixPrompt, taskId, q, getWindow, controller, 600000);
+      await runAgentPhase(db, task.project_id, 5, {
+        projectPath: workDir, model, prompt: fixPrompt, taskId, q, getWindow, controller, timeoutMs: 600000,
+      });
 
       const postFixResult = await runNativeTests(workDir, testCmd, taskId, projectName, q, getWindow, testTimeoutMs);
       if (postFixResult.pass || postFixResult.timedOut) {

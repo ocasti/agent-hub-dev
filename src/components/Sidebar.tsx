@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next';
-import { CORE_SKILLS } from '../lib/skills';
 import type { TierName } from '../lib/types';
+import * as ipc from '../lib/ipc';
 
 export type ViewId = 'dashboard' | 'tasks' | 'projects' | 'workflow' | 'plugins' | 'skills' | 'knowledge' | 'logs' | 'settings';
 
@@ -9,6 +9,7 @@ interface SidebarProps {
   setView: (v: ViewId) => void;
   counts: { tasks: number; projects: number };
   licensePlan?: TierName;
+  userName?: string;
   onUpgrade?: () => void;
 }
 
@@ -24,8 +25,10 @@ const itemDefs: { id: ViewId; labelKey: string; icon: string; countKey?: 'tasks'
   { id: 'settings', labelKey: 'nav.settings', icon: '⚙' },
 ];
 
-export default function Sidebar({ view, setView, counts, licensePlan = 'free', onUpgrade }: SidebarProps) {
+export default function Sidebar({ view, setView, counts, licensePlan = 'free', userName, onUpgrade }: SidebarProps) {
   const { t } = useTranslation('common');
+
+  const isLoggedIn = licensePlan !== 'free' && !!userName;
 
   return (
     <div className="w-56 bg-gray-950 text-gray-300 flex flex-col flex-shrink-0">
@@ -70,33 +73,48 @@ export default function Sidebar({ view, setView, counts, licensePlan = 'free', o
       </nav>
 
       <div className="p-4 border-t border-gray-800">
-        <div className="flex items-center gap-2 text-xs text-gray-500">
-          <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-          {t('sidebar.cliStatus')}
-        </div>
-        <div className="flex items-center gap-2 mt-1.5">
-          {licensePlan === 'premium' ? (
-            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white">
-              PREMIUM
-            </span>
-          ) : licensePlan === 'registered' ? (
-            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-700 text-emerald-200">
-              REGISTERED
-            </span>
-          ) : (
+        {isLoggedIn ? (
+          <>
+            <div className="flex items-center gap-2">
+              <div className="w-6 h-6 rounded-full bg-indigo-600/30 flex items-center justify-center text-[10px] font-bold text-indigo-300">
+                {userName.charAt(0).toUpperCase()}
+              </div>
+              <span className="text-xs text-gray-300 font-medium truncate flex-1">{userName}</span>
+              {licensePlan === 'premium' ? (
+                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white">
+                  PRO
+                </span>
+              ) : (
+                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-700 text-emerald-200">
+                  REG
+                </span>
+              )}
+            </div>
+            {licensePlan === 'registered' && onUpgrade && (
+              <button onClick={onUpgrade} className="text-[10px] text-indigo-400 hover:text-indigo-300 font-medium mt-1.5">
+                {t('sidebar.upgrade', 'Upgrade')}
+              </button>
+            )}
+          </>
+        ) : (
+          <div className="flex items-center justify-center gap-2">
             <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-700 text-gray-400">
               FREE
             </span>
-          )}
-          {licensePlan !== 'premium' && onUpgrade && (
-            <button onClick={onUpgrade} className="text-[10px] text-indigo-400 hover:text-indigo-300 font-medium">
-              {licensePlan === 'free' ? t('sidebar.signIn', 'Sign In') : t('sidebar.upgrade', 'Upgrade')}
+            <button
+              onClick={() => onUpgrade ? onUpgrade() : setView('settings')}
+              className="text-[10px] text-indigo-400 hover:text-indigo-300 font-medium"
+            >
+              {t('sidebar.signIn', 'Sign In')}
             </button>
-          )}
-        </div>
-        <div className="text-xs text-gray-600 mt-1">
-          {t('sidebar.coreSkills', { count: CORE_SKILLS.length })}
-        </div>
+          </div>
+        )}
+        <button
+          onClick={() => ipc.openExternal('https://github.com/ocasti/agent-hub-dev/blob/main/LICENSE')}
+          className="block w-full text-center text-[10px] text-gray-600 hover:text-gray-400 mt-2 transition-colors"
+        >
+          Agent Hub — MIT License
+        </button>
       </div>
     </div>
   );

@@ -6,6 +6,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.0.0] — 2026-03-09 — Multi-Agent Adapter System
+
+### Added
+- **Multi-Agent support**: Agent Hub supports Claude Code + Gemini CLI as verified agents. Architecture is extensible — new agents can be added via `GenericAgentDef` once tested end-to-end.
+- **Agent Adapter pattern**: `AgentAdapter` interface abstracts agent differences (binary, flags, stdin protocol, env vars)
+  - `ClaudeAdapter`: specialized adapter preserving exact Claude Code CLI behavior
+  - `GenericAdapter`: config-driven adapter for all other agents via `GenericAgentDef`
+  - Agent registry: `registerAgent()`, `getAgent()`, `getAllAgents()`, `getInstalledAgents()`
+- **Tier-based agent configuration**:
+  - **Free**: one global agent for ALL projects — changing updates every project immediately
+  - **Registered**: global default + per-project override (single agent)
+  - **Premium**: per-phase primary + fallback with automatic failover
+- **Automatic failover** (Premium): if primary agent fails, retries with fallback agent
+- **Agent resolution flow**: `project.ai_agent_phases[phase]` → `project.ai_agent` → `settings.default_ai_agent` → `'claude'`
+- **Settings UI**: new "AI Agent" section with global/default agent selector, tier-aware labels, and installed agents list with version/status
+- **ProjectForm UI**: agent dropdown (disabled for free), per-phase timeline pipeline with primary + fallback selectors (Premium only)
+- **Health check**: detects all installed agent CLIs, Specify CLI (`specify version`), and per-agent SDD Kit status
+- **Per-agent SDD Kit detection**: checks `~/{configFolder}/commands/speckit.specify.md` for each agent (not just Claude)
+- **Agent validation before spawn**: verifies agent is installed before executing — auto-falls back to any installed agent if configured one is missing (prevents ENOENT crashes)
+- **Agent prompt adaptation**: `transformPrompt()` hook per adapter for agent-specific prompt customization
+- **Database migration 16**: `ai_agent` and `ai_agent_phases` columns on projects table
+
+### Changed
+- **Orchestrator**: all `runClaudePhase()` calls replaced with `runAgentPhase()` — agent-agnostic phase execution
+- **Repo Analysis**: uses resolved agent instead of hardcoded Claude spawn — respects project agent config
+- **PR Feedback**: uses adapter system for all 9 agent subprocess calls
+- **Test Runner**: uses adapter system for test fix loops
+- **Refine with AI**: uses resolved agent instead of hardcoded Claude
+- **Health Check UI**: "AI Agent" (any installed) replaces "Claude Code CLI"; "Specify CLI (SDD Kit)" replaces "Speckit Commands"
+- **Installed Agents UI**: two-column layout, sorted installed-first, shows SDD Kit status per agent (Ready / No SDD Kit / Not installed)
+- **Prompt builder**: prompts documented as agent-agnostic; adapters customize via `transformPrompt()`
+- **License system**: added `multi_agent_mode` field (`global_only` | `per_project` | `per_phase`)
+- **SPEC.md**: updated F3 (Agent Execution) and F9 (Settings) for multi-agent support
+- **Plugin docs**: noted that plugins interact with agent-agnostic hooks (no plugin API changes)
+- **AGENT.md**: project context file renamed from `CLAUDE.md` to `AGENT.md` — agent-agnostic name for auto-generated project documentation
+
+---
+
 ## [1.5.0] — 2026-03-09 — Worktrees V3: Auto-merge, Diff Viewer & Monorepo Support
 
 ### Added
@@ -91,7 +129,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - Searchable select with `source` that loads options from plugin MCP operations
   - `onSelect.fetch` calls a detail operation when user selects an item
   - `onSelect.fill` auto-completes task form fields (title, description, criteria) from fetched data
-  - Fully agnostic: works with any PM tool (Codebranch, Jira, Linear, etc.) — only JSON changes
+  - Fully agnostic: works with any PM tool (Jira, Linear, Asana, etc.) — only JSON changes
 - **Plugin operation execution**: new IPC endpoints `plugins:executeOperation` and `plugins:getTaskFields`
 
 ### Changed
@@ -125,5 +163,5 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Settings: concurrent agents, default model, review loops, health check
 - i18n: English and Spanish
 - Test runner: native test detection and execution
-- Repo analysis: auto-generates CLAUDE.md for new projects
+- Repo analysis: auto-generates AGENT.md for new projects
 - AI-assisted refinement: "Refine with AI" for task descriptions and acceptance criteria

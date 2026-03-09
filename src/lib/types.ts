@@ -21,6 +21,8 @@ export interface Project {
   codeHostingConfig?: CodeHostingProjectConfig;
   pluginPm?: string;
   pluginPmConfig?: Record<string, string>;
+  aiAgent: string;
+  aiAgentPhases: Record<string, { primary: string; fallback?: string }>;
   createdAt: string;
   updatedAt: string;
 }
@@ -133,6 +135,7 @@ export interface LicenseLimits {
   max_knowledge: number;
   community_plugins: boolean;
   max_parallel_per_project: number;
+  multi_agent_mode: 'global_only' | 'per_project' | 'per_phase';
 }
 
 export interface AuthResult {
@@ -151,7 +154,7 @@ export interface UpdateInfo {
 export interface WorktreeInfo {
   taskId: string;
   taskTitle: string;
-  taskStatus: string;
+  taskStatus: TaskStatus;
   branchName: string;
   worktreePath: string;
   projectName: string;
@@ -203,6 +206,7 @@ export interface PluginCompatResult {
 export interface Settings {
   maxConcurrent: number;
   defaultModel: 'sonnet' | 'opus';
+  defaultAiAgent: string;
   maxReviewLoops: number;
   theme: 'light' | 'dark';
   locale: 'en' | 'es';
@@ -247,12 +251,24 @@ export interface NotificationsConfig {
   keys: Record<NotificationKey, boolean>;
 }
 
+export interface InstalledAgent {
+  id: string;
+  name: string;
+  binary: string;
+  version: string | null;
+  installed: boolean;
+  speckitInstalled: boolean;
+}
+
 export interface HealthStatus {
-  claudeInstalled: boolean;
-  claudeVersion?: string;
+  aiAgentReady: boolean;
+  aiAgentName?: string;
+  aiAgentCount: number;
   gitInstalled: boolean;
-  specifyInstalled: boolean;
+  specifyCliInstalled: boolean;
+  specifyCliVersion?: string;
   pluginClis: { name: string; installed: boolean; version?: string; pluginName: string }[];
+  agents: InstalledAgent[];
 }
 
 export interface AgentLogMessage {
@@ -408,6 +424,8 @@ export interface ProjectRow {
   code_hosting_config: string;
   plugin_pm: string | null;
   plugin_pm_config: string;
+  ai_agent: string;
+  ai_agent_phases: string;
   created_at: string;
   updated_at: string;
 }
@@ -477,6 +495,7 @@ export interface ElectronAPI {
   runAgent: (taskId: string, phase?: string) => Promise<void>;
   stopAgent: (taskId: string) => Promise<void>;
   healthCheck: () => Promise<HealthStatus>;
+  getInstalledAgents: () => Promise<InstalledAgent[]>;
 
   onAgentLog: (callback: (log: AgentLogMessage) => void) => () => void;
   onAgentPhaseUpdate: (callback: (update: AgentPhaseUpdate) => void) => () => void;

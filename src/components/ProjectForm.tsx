@@ -1,17 +1,29 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { Project, Plugin, CodeHostingProjectConfig } from '../lib/types';
+import type { Project, Plugin, CodeHostingProjectConfig, InstalledAgent, TierName } from '../lib/types';
 import { OPTIONAL_SKILLS } from '../lib/skills';
-import { selectFolder, getGitRemote, analyzeRepo, getPlugins } from '../lib/ipc';
+import { selectFolder, getGitRemote, analyzeRepo, getPlugins, getInstalledAgents } from '../lib/ipc';
+import { IconLock } from './ui/Icons';
 import SkillTag from './ui/SkillTag';
+
+const PHASE_LABELS = [
+  { key: '0', label: 'Spec Review' },
+  { key: '1', label: 'Plan' },
+  { key: '2', label: 'Implement' },
+  { key: '3', label: 'Quality Gate' },
+  { key: '4', label: 'Ship' },
+  { key: '5', label: 'PR Feedback' },
+];
 
 interface ProjectFormProps {
   project?: Project;
   onSave: (data: Omit<Project, 'createdAt' | 'updatedAt'>) => void;
   onCancel: () => void;
+  licensePlan?: TierName;
+  multiAgentMode?: 'global_only' | 'per_project' | 'per_phase';
 }
 
-export default function ProjectForm({ project, onSave, onCancel }: ProjectFormProps) {
+export default function ProjectForm({ project, onSave, onCancel, licensePlan = 'free', multiAgentMode = 'global_only' }: ProjectFormProps) {
   const { t } = useTranslation(['projects', 'common']);
   const [form, setForm] = useState({
     id: project?.id || '',
@@ -25,13 +37,19 @@ export default function ProjectForm({ project, onSave, onCancel }: ProjectFormPr
     codeHostingConfig: project?.codeHostingConfig || {} as CodeHostingProjectConfig,
     pluginPm: project?.pluginPm || '',
     pluginPmConfig: project?.pluginPmConfig || {} as Record<string, string>,
+    aiAgent: project?.aiAgent || 'claude',
+    aiAgentPhases: project?.aiAgentPhases || {} as Record<string, { primary: string; fallback?: string }>,
   });
 
   const [availablePlugins, setAvailablePlugins] = useState<Plugin[]>([]);
+  const [agents, setAgents] = useState<InstalledAgent[]>([]);
 
   useEffect(() => {
     getPlugins().then(setAvailablePlugins).catch(() => {});
+    getInstalledAgents().then(setAgents).catch(() => {});
   }, []);
+
+  const installedAgents = agents.filter((a) => a.installed);
 
   const codeHostingPlugins = availablePlugins.filter((p) =>
     p.capabilities.includes('ship') || p.capabilities.includes('pr_feedback')
@@ -158,7 +176,7 @@ export default function ProjectForm({ project, onSave, onCancel }: ProjectFormPr
         {analyzeSuccess && (
           <div className="mb-2 px-3 py-2 bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 rounded-lg text-xs text-green-600 dark:text-green-400 flex items-center gap-1.5">
             <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
-            {t('form.claudeMdCreated')}
+            {t('form.agentMdCreated')}
           </div>
         )}
         <textarea
@@ -254,6 +272,122 @@ export default function ProjectForm({ project, onSave, onCancel }: ProjectFormPr
           </div>
         </div>
       )}
+
+      {/* AI Agent Configuration */}
+      <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 space-y-3">
+        <div className="flex items-center gap-2 mb-1">
+          <span className="text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider">
+            {t('form.agentTitle', 'AI Agent')}
+          </span>
+          {multiAgentMode === 'global_only' && (
+            <span className="text-[10px] text-gray-400 dark:text-gray-500 font-normal normal-case">
+              {t('form.agentControlledByGlobal', 'Controlled by global settings')}
+            </span>
+          )}
+        </div>
+
+        {/* Agent selector — disabled for free tier */}
+        <div>
+          <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
+            {t('form.agentLabel', 'Agent')}
+          </label>
+          {multiAgentMode === 'global_only' ? (
+            <div className="w-full max-w-xs border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 rounded-lg px-3 py-2 text-sm cursor-default">
+              {installedAgents.find((a) => a.id === form.aiAgent)?.name || form.aiAgent}
+              <span className="text-xs text-gray-400 ml-2">({t('form.agentControlledByGlobal', 'Controlled by global settings')})</span>
+            </div>
+          ) : (
+            <select
+              value={form.aiAgent}
+              onChange={(e) => setForm({ ...form, aiAgent: e.target.value })}
+              className="w-full max-w-xs border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              {installedAgents.map((a) => (
+                <option key={a.id} value={a.id}>{a.name}</option>
+              ))}
+              {installedAgents.length === 0 && <option value="claude">Claude Code</option>}
+            </select>
+          )}
+        </div>
+
+        {/* Per-phase timeline — Premium only */}
+        <div className="pt-3 border-t border-gray-200 dark:border-gray-700">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-xs font-medium text-gray-600 dark:text-gray-400">
+              {t('form.agentTimeline', 'Workflow Pipeline')}
+            </span>
+            {multiAgentMode !== 'per_phase' && (
+              <span className="inline-flex items-center gap-1 text-[10px] text-gray-400">
+                <IconLock className="w-3 h-3" /> Premium
+              </span>
+            )}
+          </div>
+
+          {/* Timeline visual */}
+          <div className="flex items-start gap-1 overflow-x-auto pb-2">
+            {PHASE_LABELS.map((phase, idx) => {
+              const phaseConfig = form.aiAgentPhases[phase.key];
+              const primaryAgent = phaseConfig?.primary || form.aiAgent;
+              const fallbackAgent = phaseConfig?.fallback || '';
+              const isLocked = multiAgentMode !== 'per_phase';
+
+              return (
+                <div key={phase.key} className="flex flex-col items-center min-w-[100px]">
+                  {/* Phase dot + connector */}
+                  <div className="flex items-center w-full mb-2">
+                    {idx > 0 && <div className="flex-1 h-0.5 bg-gray-300 dark:bg-gray-600" />}
+                    <div className={`w-3 h-3 rounded-full flex-shrink-0 ${isLocked ? 'bg-gray-300 dark:bg-gray-600' : 'bg-indigo-500'}`} />
+                    {idx < PHASE_LABELS.length - 1 && <div className="flex-1 h-0.5 bg-gray-300 dark:bg-gray-600" />}
+                  </div>
+                  {/* Phase label */}
+                  <span className="text-[10px] text-gray-500 dark:text-gray-400 mb-1.5 text-center leading-tight">
+                    {t(`form.phase.${phase.key}`, phase.label)}
+                  </span>
+                  {/* Agent selectors */}
+                  <div className={`w-full rounded-lg border p-1.5 space-y-1 ${isLocked ? 'border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 opacity-60' : 'border-indigo-200 dark:border-indigo-800 bg-white dark:bg-gray-800'}`}>
+                    <select
+                      value={primaryAgent}
+                      disabled={isLocked}
+                      onChange={(e) => {
+                        const updated = { ...form.aiAgentPhases };
+                        updated[phase.key] = { ...updated[phase.key], primary: e.target.value };
+                        setForm({ ...form, aiAgentPhases: updated });
+                      }}
+                      className="w-full text-[10px] border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded px-1.5 py-1 outline-none disabled:cursor-default disabled:opacity-70"
+                    >
+                      {installedAgents.map((a) => (
+                        <option key={a.id} value={a.id}>{a.name}</option>
+                      ))}
+                      {installedAgents.length === 0 && <option value="claude">Claude</option>}
+                    </select>
+                    <select
+                      value={fallbackAgent}
+                      disabled={isLocked}
+                      onChange={(e) => {
+                        const updated = { ...form.aiAgentPhases };
+                        updated[phase.key] = { primary: updated[phase.key]?.primary || form.aiAgent, fallback: e.target.value || undefined };
+                        setForm({ ...form, aiAgentPhases: updated });
+                      }}
+                      className="w-full text-[10px] border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded px-1.5 py-1 outline-none disabled:cursor-default disabled:opacity-70"
+                    >
+                      <option value="">{t('form.agentNoFallback', 'No fallback')}</option>
+                      {installedAgents.filter((a) => a.id !== primaryAgent).map((a) => (
+                        <option key={a.id} value={a.id}>{a.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {multiAgentMode !== 'per_phase' && (
+            <p className="text-[10px] text-gray-400 mt-1">
+              {t('form.agentPremiumHint', 'Unlock per-phase agents & automatic fallback with Premium')}
+            </p>
+          )}
+        </div>
+      </div>
 
       <div>
         <label className="block text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2 uppercase tracking-wider">{t('form.labelOptionalSkills')}</label>

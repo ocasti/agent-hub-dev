@@ -196,4 +196,13 @@ export const MIGRATIONS = [
       ALTER TABLE tasks ADD COLUMN worktree_path TEXT DEFAULT NULL;
     `,
   },
+  {
+    version: 16,
+    name: '016_multi_agent',
+    sql: `
+      ALTER TABLE projects ADD COLUMN ai_agent TEXT DEFAULT 'claude';
+      ALTER TABLE projects ADD COLUMN ai_agent_phases TEXT DEFAULT '{}';
+      INSERT OR IGNORE INTO settings (key, value) VALUES ('default_ai_agent', 'claude');
+    `,
+  },
 ];

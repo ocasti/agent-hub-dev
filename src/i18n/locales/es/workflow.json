@@ -133,5 +133,9 @@
   "hooks.phase2": "on:implement_complete",
   "hooks.phase3": "on:review_started → on:quality_fail | on:quality_pass → on:core_complete",
   "hooks.phase4": "on:ship_started → on:ship_failed | on:pr_created",
-  "hooks.phase5": "on:pr_changes_requested → on:pr_fix_pushed | on:pr_approved → on:task_complete"
+  "hooks.phase5": "on:pr_changes_requested → on:pr_fix_pushed | on:pr_approved → on:task_complete",
+
+  "agent.runningWith": "Ejecutando con {{agent}}",
+  "agent.fallbackSwitch": "Fallback: cambiando a {{agent}}",
+  "agent.primaryFailed": "Agente primario ({{primary}}) fallo — cambiando a {{fallback}}"
 }

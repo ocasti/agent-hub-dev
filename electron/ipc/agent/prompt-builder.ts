@@ -1,6 +1,10 @@
 import type { TaskRow, KnowledgeRow, FetchedThread, ThreadPromptInput } from './types';
 
 // ── Prompt Builder Functions ────────────────────────────────────────────────────
+//
+// Prompts are agent-agnostic: they reference generic capabilities (read files,
+// edit files, run commands) rather than Claude-specific tool names. Each adapter
+// can further customize via `transformPrompt()` in the AgentAdapter interface.
 
 export function buildKnowledgeSection(knowledge: KnowledgeRow[]): string {
   if (knowledge.length === 0) return '';

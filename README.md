@@ -1,8 +1,8 @@
 # Agent Hub
 
-**Desktop orchestrator for Spec-Driven Development with Claude Code CLI.**
+**Desktop orchestrator for Spec-Driven Development with multiple AI agent CLIs.**
 
-Agent Hub is a cross-platform desktop application that manages the full lifecycle of development tasks using [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code). It is not an IDE or editor — it's a visual control center that sends enriched prompts, streams real-time output, manages task state across phases, and learns from code reviews to improve future work.
+Agent Hub is a cross-platform desktop application that manages the full lifecycle of development tasks using AI coding agents (Claude Code, Gemini CLI, Codex CLI, GitHub Copilot, and 11 more). It is not an IDE or editor — it's a visual control center that sends enriched prompts, streams real-time output, manages task state across phases, and learns from code reviews to improve future work.
 
 All generated code lives inside your projects. Agent Hub only orchestrates.
 
@@ -27,8 +27,8 @@ All generated code lives inside your projects. Agent Hub only orchestrates.
 │                       │                                      │
 │           ┌───────────┼───────────┐                          │
 │           ▼           ▼           ▼                          │
-│     Claude Code    GitHub CLI   SQLite DB                    │
-│     (subprocess)   (gh)         (better-sqlite3)             │
+│      AI Agents     GitHub CLI   SQLite DB                    │
+│     (Claude + Gemini)     (gh)         (better-sqlite3)             │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -130,7 +130,7 @@ Knowledge entries are:
 | Framework | Electron 40 (cross-platform: macOS, Linux, Windows) |
 | Frontend | React 19 + TypeScript + TailwindCSS 4 + Vite 7 |
 | Database | SQLite via better-sqlite3 |
-| CLI Integration | Claude Code CLI (subprocess) + GitHub CLI (`gh`) |
+| CLI Integration | Multi-Agent Adapter (Claude, Gemini, Codex, Copilot + 11 more) |
 | Real-time logs | Electron IPC (main → renderer) |
 | Tests | Vitest |
 | i18n | i18next + react-i18next |
@@ -159,13 +159,18 @@ Knowledge entries are:
 │  │   ├── claude-cli.ts                                  │
 │  │   ├── prompt-builder.ts                              │
 │  │   ├── output-parser.ts                               │
-│  │   ├── github-api.ts                                  │
 │  │   ├── git-ops.ts                                     │
 │  │   ├── pr-feedback.ts                                 │
 │  │   ├── test-runner.ts                                 │
 │  │   ├── repo-analysis.ts                               │
 │  │   ├── state.ts                                       │
-│  │   └── types.ts                                       │
+│  │   ├── types.ts                                       │
+│  │   └── agents/            ← Multi-agent adapter       │
+│  │       ├── types.ts          system (v2.0)            │
+│  │       ├── claude-adapter.ts                          │
+│  │       ├── generic-adapter.ts                         │
+│  │       ├── registry.ts                                │
+│  │       └── index.ts                                   │
 │  ├── tasks.ts                                           │
 │  ├── projects.ts                                        │
 │  ├── skills.ts                                          │
@@ -174,8 +179,8 @@ Knowledge entries are:
 │                                                         │
 │           │               │               │             │
 │           ▼               ▼               ▼             │
-│     SQLite DB       Claude Code CLI    GitHub CLI       │
-│  (better-sqlite3)   (subprocess)       (gh)             │
+│     SQLite DB        AI Agent CLIs    GitHub CLI        │
+│  (better-sqlite3)   (extensible)    (gh)             │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -199,13 +204,20 @@ The app reads and writes these configuration files directly. Toggle ON adds to `
 
 Before using Agent Hub, ensure you have:
 
-- **Node.js** 20+ — [nodejs.org](https://nodejs.org/)
-- **Claude Code CLI** installed and authenticated
+- **At least one AI agent CLI** — any of the 15 supported agents:
   ```bash
-  npm install -g @anthropic-ai/claude-code
-  claude login
+  # Examples:
+  npm install -g @anthropic-ai/claude-code && claude login   # Claude Code
+  # Or: gemini, codex, copilot, kiro-cli, amp, etc.
   ```
-- **GitHub CLI** installed and authenticated
+- **Git** configured with user name and email
+- **Node.js** 20+ — [nodejs.org](https://nodejs.org/)
+- **Specify CLI** (recommended) — configures SDD Kit per agent:
+  ```bash
+  uv tool install specify-cli
+  specify init . --ai claude   # or --ai gemini, --ai codex, etc.
+  ```
+- **GitHub CLI** (optional, for Ship & PR Feedback phases):
   ```bash
   # macOS
   brew install gh
@@ -214,7 +226,6 @@ Before using Agent Hub, ensure you have:
 
   gh auth login
   ```
-- **Git** configured with user name and email
 
 ---
 
@@ -279,19 +290,24 @@ agent-hub/
 │   ├── main.ts                 # Electron main process entry
 │   ├── preload.ts              # Secure IPC bridge (contextBridge)
 │   ├── ipc/
-│   │   ├── agent/              # SDD workflow engine (12 modules)
+│   │   ├── agent/              # SDD workflow engine
 │   │   │   ├── index.ts        # IPC handler registration
 │   │   │   ├── orchestrator.ts # 6-phase workflow orchestration
-│   │   │   ├── claude-cli.ts   # Claude Code CLI execution
+│   │   │   ├── claude-cli.ts   # Shared CLI utilities (execFileAsync, cleanEnv)
 │   │   │   ├── prompt-builder.ts # Enriched prompt construction
 │   │   │   ├── output-parser.ts  # Phase output parsing
-│   │   │   ├── github-api.ts   # GraphQL/REST GitHub operations
 │   │   │   ├── git-ops.ts      # Branch, commit, push operations
 │   │   │   ├── pr-feedback.ts  # PR review fetch & fix workflow
 │   │   │   ├── test-runner.ts  # Native test detection & execution
-│   │   │   ├── repo-analysis.ts # Project analysis & CLAUDE.md
+│   │   │   ├── repo-analysis.ts # Project analysis & AGENT.md
 │   │   │   ├── state.ts        # Resolver maps & helpers
-│   │   │   └── types.ts        # Shared interfaces & constants
+│   │   │   ├── types.ts        # Shared interfaces & constants
+│   │   │   └── agents/         # Multi-agent adapter system (v2.0)
+│   │   │       ├── types.ts    # AgentAdapter interface & agent definitions
+│   │   │       ├── claude-adapter.ts  # Claude Code specialized adapter
+│   │   │       ├── generic-adapter.ts # Config-driven adapter (14 agents)
+│   │   │       ├── registry.ts # Resolution, failover, speckit detection
+│   │   │       └── index.ts    # Re-exports
 │   │   ├── tasks.ts            # Task CRUD + settings
 │   │   ├── projects.ts         # Project CRUD
 │   │   ├── skills.ts           # Claude Code settings.json management

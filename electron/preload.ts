@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   runAgent: (taskId: string, phase?: string) => ipcRenderer.invoke('agent:run', taskId, phase),
   stopAgent: (taskId: string) => ipcRenderer.invoke('agent:stop', taskId),
   healthCheck: () => ipcRenderer.invoke('agent:healthCheck'),
+  getInstalledAgents: () => ipcRenderer.invoke('agent:getInstalledAgents'),
 
   // Agent logs listener
   onAgentLog: (callback: (log: unknown) => void) => {
