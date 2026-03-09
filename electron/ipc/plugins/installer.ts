@@ -21,6 +21,8 @@ const ALLOWED_COMMAND_PREFIXES = [
   'glab auth status',
   'git --version',
   'node --version',
+  'npm --version',
+  'npx --version',
 ];
 
 function isCommandAllowed(command: string): boolean {
@@ -202,28 +204,40 @@ export function validateConfig(
 
 // ── MCP Setup (A1: hardened) ─────────────────────────────────────────────────────
 
-export async function executeMcpSetup(setup: PluginSetup): Promise<void> {
+/**
+ * Resolve {{key}} placeholders in a command string using the plugin config.
+ * Only replaces known config keys — unknown placeholders are left as-is.
+ */
+function resolveConfigPlaceholders(command: string, config: Record<string, string>): string {
+  return command.replace(/\{\{(\w+)\}\}/g, (_match, key: string) => {
+    return config[key] || '';
+  });
+}
+
+export async function executeMcpSetup(setup: PluginSetup, config: Record<string, string> = {}): Promise<void> {
   for (const step of setup.steps) {
+    const rawCommand = step.command ? resolveConfigPlaceholders(step.command, config) : '';
+
     switch (step.type) {
       case 'mcp_add': {
-        if (!step.command) continue;
-        if (!step.command.trim().startsWith('claude mcp')) {
-          throw new Error(`Blocked: mcp_add commands must start with "claude mcp". Got: ${step.command}`);
+        if (!rawCommand) continue;
+        if (!rawCommand.trim().startsWith('claude mcp')) {
+          throw new Error(`Blocked: mcp_add commands must start with "claude mcp". Got: ${rawCommand}`);
         }
-        if (!isCommandAllowed(step.command)) {
-          throw new Error(`Blocked: command not in whitelist: ${step.command}`);
+        if (!isCommandAllowed(rawCommand)) {
+          throw new Error(`Blocked: command not in whitelist: ${rawCommand}`);
         }
-        await execCommand(step.command);
+        await execCommand(rawCommand);
         break;
       }
       case 'cli_check': {
-        if (!step.command) continue;
+        if (!rawCommand) continue;
         // cli_check must match "<tool> --version" or "<tool> auth status"
-        if (!isCommandAllowed(step.command)) {
-          throw new Error(`Blocked: cli_check command not in whitelist: ${step.command}`);
+        if (!isCommandAllowed(rawCommand)) {
+          throw new Error(`Blocked: cli_check command not in whitelist: ${rawCommand}`);
         }
         try {
-          await execCommand(step.command);
+          await execCommand(rawCommand);
         } catch {
           throw new Error(`Required CLI tool not found: ${step.description}`);
         }
@@ -243,12 +257,38 @@ function execCommand(command: string): Promise<string> {
       reject(new Error(`Blocked: command not in whitelist: ${command}`));
       return;
     }
-    const [cmd, ...args] = command.split(' ');
+    // Parse command respecting quoted strings (for --header "Bearer xxx")
+    const args = parseCommandArgs(command);
+    const cmd = args.shift()!;
     execFile(cmd, args, { timeout: 30000 }, (error, stdout) => {
       if (error) reject(error);
       else resolve(stdout);
     });
   });
+}
+
+/**
+ * Parse a command string into args, respecting double-quoted strings.
+ * e.g. 'claude mcp add pm --header "Authorization: Bearer abc"'
+ * → ['claude', 'mcp', 'add', 'pm', '--header', 'Authorization: Bearer abc']
+ */
+function parseCommandArgs(command: string): string[] {
+  const args: string[] = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+    } else if (ch === ' ' && !inQuotes) {
+      if (current) { args.push(current); current = ''; }
+    } else {
+      current += ch;
+    }
+  }
+  if (current) args.push(current);
+  return args;
 }
 
 // ── Bundled Plugin Install ───────────────────────────────────────────────────────
@@ -310,7 +350,7 @@ export async function installBundledPlugin(
   if (existsSync(setupPath)) {
     try {
       const setup = JSON.parse(readFileSync(setupPath, 'utf-8')) as PluginSetup;
-      await executeMcpSetup(setup);
+      await executeMcpSetup(setup, config);
     } catch (err) {
       console.error(`[plugins] Setup execution failed for ${pluginId}:`, err);
     }
@@ -399,7 +439,7 @@ export async function installPluginFromDisk(
   if (existsSync(setupPath)) {
     try {
       const setup = JSON.parse(readFileSync(setupPath, 'utf-8')) as PluginSetup;
-      await executeMcpSetup(setup);
+      await executeMcpSetup(setup, config);
     } catch (err) {
       console.error(`[plugins] Setup execution failed for ${pluginId}:`, err);
     }
@@ -540,7 +580,7 @@ export async function downloadAndInstallPlugin(
     if (existsSync(setupPath)) {
       try {
         const setup = JSON.parse(readFileSync(setupPath, 'utf-8')) as PluginSetup;
-        await executeMcpSetup(setup);
+        await executeMcpSetup(setup, config);
       } catch (err) {
         console.error(`[plugins] Setup execution failed for ${catalogEntry.id}:`, err);
       }
