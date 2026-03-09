@@ -52,7 +52,7 @@ const TIER_LIMITS: Record<TierName, LicenseLimits> = {
 
 export const FREE_LIMITS: LicenseLimits = TIER_LIMITS.free;
 
-const API_BASE = 'https://integral-apps.cloud/wp-json/agent-hub/v1';
+const API_BASE = process.env.API_BASE_URL || 'https://integral-apps.cloud/wp-json/agent-hub/v1';
 const OFFLINE_GRACE_DAYS = 7;
 const TOKEN_REFRESH_DAYS = 25; // Refresh before 30-day expiry
 

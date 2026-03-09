@@ -28,6 +28,7 @@ jobs:
         run: |
           echo "PLUGIN_REGISTRY_URL=${{ secrets.PLUGIN_REGISTRY_URL }}" > .env
           echo "PREMIUM_URL=${{ secrets.PREMIUM_URL }}" >> .env
+          echo "API_BASE_URL=${{ secrets.API_BASE_URL }}" >> .env
 
       - name: Install dependencies
         run: npm ci
@@ -56,6 +57,7 @@ jobs:
         run: |
           echo "PLUGIN_REGISTRY_URL=${{ secrets.PLUGIN_REGISTRY_URL }}" > .env
           echo "PREMIUM_URL=${{ secrets.PREMIUM_URL }}" >> .env
+          echo "API_BASE_URL=${{ secrets.API_BASE_URL }}" >> .env
 
       - name: Install dependencies
         run: npm ci
@@ -85,6 +87,7 @@ jobs:
         run: |
           echo "PLUGIN_REGISTRY_URL=${{ secrets.PLUGIN_REGISTRY_URL }}" > .env
           echo "PREMIUM_URL=${{ secrets.PREMIUM_URL }}" >> .env
+          echo "API_BASE_URL=${{ secrets.API_BASE_URL }}" >> .env
 
       - name: Install dependencies
         run: npm ci
