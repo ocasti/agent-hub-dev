@@ -1,4 +1,4 @@
-import { type IpcMain, type BrowserWindow, app } from 'electron';
+import { type IpcMain, BrowserWindow, app } from 'electron';
 import type Database from 'better-sqlite3';
 import { autoUpdater } from 'electron-updater';
 import { gt } from 'semver';
@@ -52,10 +52,10 @@ export function registerUpdateHandlers(
     if (win) {
       win.webContents.send('agent:log', { taskId: '__system__', projectName: 'Auto-Updater', message, kind });
     }
-    // Also persist to DB so it survives restarts
+    // Also persist to DB so it survives restarts (task_id NULL to avoid FK constraint)
     try {
-      db.prepare('INSERT INTO logs (id, task_id, project_name, message, kind, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-        .run(crypto.randomUUID(), '__system__', 'Auto-Updater', message, kind, new Date().toISOString());
+      db.prepare('INSERT INTO logs (id, task_id, project_name, message, kind, created_at) VALUES (?, NULL, ?, ?, ?, ?)')
+        .run(crypto.randomUUID(), 'Auto-Updater', message, kind, new Date().toISOString());
     } catch { /* logs table might not exist yet */ }
   }
 
@@ -145,18 +145,26 @@ export function registerUpdateHandlers(
     // Defer to next tick so the IPC response reaches the renderer before quit
     setImmediate(() => {
       try {
+        // Remove all listeners that could block the quit sequence on macOS.
+        // quitAndInstall() emits 'close' on all windows → triggers 'window-all-closed'
+        // which can race with the update installer (ShipIt on macOS).
+        app.removeAllListeners('window-all-closed');
+        BrowserWindow.getAllWindows().forEach((win) => {
+          win.removeAllListeners('close');
+        });
+
+        // Disable autoInstallOnAppQuit before calling quitAndInstall to avoid
+        // RACCommandErrorDomain conflict on macOS (electron-builder issue #6418)
+        autoUpdater.autoInstallOnAppQuit = false;
+
         sendUpdateLog('Calling quitAndInstall...');
         autoUpdater.quitAndInstall(false, true);
       } catch (err) {
         sendUpdateLog(`quitAndInstall failed: ${(err as Error).message}`, 'error');
-        getWindow()?.webContents.send('update:error', `Install failed: ${(err as Error).message}`);
-        return;
+        // Force exit as last resort — use app.exit() instead of app.quit()
+        // to avoid triggering event handlers that could interfere with the installer
+        app.exit(0);
       }
-      // Fallback: if quitAndInstall didn't exit within 3s, force quit
-      setTimeout(() => {
-        sendUpdateLog('quitAndInstall did not exit — forcing app.quit()', 'error');
-        app.quit();
-      }, 3000);
     });
   });
 
