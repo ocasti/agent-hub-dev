@@ -1,4 +1,4 @@
-import type { IpcMain, BrowserWindow } from 'electron';
+import { type IpcMain, type BrowserWindow, app } from 'electron';
 import type Database from 'better-sqlite3';
 import { autoUpdater } from 'electron-updater';
 import { gt } from 'semver';
@@ -115,7 +115,17 @@ export function registerUpdateHandlers(
   });
 
   ipcMain.handle('update:install', () => {
-    autoUpdater.quitAndInstall();
+    // On macOS, quitAndInstall may not fully quit the app.
+    // Force-close all windows first, then quit and install.
+    const win = getWindow();
+    if (win) {
+      win.removeAllListeners('close');
+      win.close();
+    }
+    // isSilent=false (show installer), isForceRunAfter=true (relaunch app)
+    autoUpdater.quitAndInstall(false, true);
+    // Fallback: if quitAndInstall didn't kill the process, force quit
+    setTimeout(() => app.exit(0), 1000);
   });
 
   ipcMain.handle('update:skip', (_event, version: string) => {
