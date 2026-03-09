@@ -20,12 +20,13 @@ import { registerNotificationHandlers, initNotifications } from './ipc/notificat
 import { cleanOrphanWorktrees } from './ipc/agent/worktree';
 import i18nMain from './i18n/index';
 
-// ── Fix PATH for macOS apps launched from Finder ────────────────────────────────
-// When launched from Finder, process.env.PATH is minimal (/usr/bin:/bin:/usr/sbin:/sbin).
-// We need the user's full shell PATH to find tools like claude, gh, git, node, etc.
-if (process.platform === 'darwin' && !process.env.VITE_DEV_SERVER_URL) {
+// ── Fix PATH for desktop apps launched from GUI ─────────────────────────────────
+// When launched from Finder (macOS) or desktop launcher (Linux), process.env.PATH
+// is minimal and won't include tools like claude, gh, git, node, etc.
+// We resolve the user's full shell PATH on both platforms.
+if ((process.platform === 'darwin' || process.platform === 'linux') && !process.env.VITE_DEV_SERVER_URL) {
   try {
-    const shell = process.env.SHELL || '/bin/zsh';
+    const shell = process.env.SHELL || (process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash');
     const shellPath = execFileSync(shell, ['-ilc', 'echo -n $PATH'], {
       encoding: 'utf8',
       timeout: 5000,
@@ -34,15 +35,23 @@ if (process.platform === 'darwin' && !process.env.VITE_DEV_SERVER_URL) {
       process.env.PATH = shellPath;
     }
   } catch {
-    // Fallback: append common macOS tool paths
-    const extra = [
-      '/opt/homebrew/bin',
-      '/opt/homebrew/sbin',
-      '/usr/local/bin',
-      `${process.env.HOME}/.local/bin`,
-      `${process.env.HOME}/.nvm/versions/node`,
-    ].join(':');
-    process.env.PATH = `${process.env.PATH}:${extra}`;
+    // Fallback: append common tool paths
+    const extra = process.platform === 'darwin'
+      ? [
+          '/opt/homebrew/bin',
+          '/opt/homebrew/sbin',
+          '/usr/local/bin',
+          `${process.env.HOME}/.local/bin`,
+          `${process.env.HOME}/.nvm/versions/node`,
+        ]
+      : [
+          '/usr/local/bin',
+          `${process.env.HOME}/.local/bin`,
+          `${process.env.HOME}/.nvm/versions/node`,
+          `${process.env.HOME}/.npm-global/bin`,
+          '/snap/bin',
+        ];
+    process.env.PATH = `${process.env.PATH}:${extra.join(':')}`;
   }
 }
 
