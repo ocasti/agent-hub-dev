@@ -531,6 +531,9 @@ export interface ElectronAPI {
   getNotificationsConfig: () => Promise<NotificationsConfig>;
   updateNotificationsConfig: (config: NotificationsConfig) => Promise<void>;
 
+  // App info
+  getAppVersion: () => Promise<string>;
+
   onMenuNavigate: (callback: (route: string) => void) => () => void;
   onShowAbout: (callback: () => void) => () => void;
 }

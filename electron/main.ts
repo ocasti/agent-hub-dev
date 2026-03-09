@@ -229,6 +229,9 @@ app.whenReady().then(() => {
   registerNotificationHandlers(ipcMain, db);
   initNotifications(db, () => mainWindow);
 
+  // App version
+  ipcMain.handle('app:getVersion', () => app.getVersion());
+
   // Background license validation 3s after window creation
   setTimeout(() => {
     try {

@@ -31,10 +31,12 @@ export default function SettingsView({ settings, onUpdate, licensePlan = 'free',
   const [refreshing, setRefreshing] = useState(false);
   const [refreshDone, setRefreshDone] = useState(false);
   const [notifConfig, setNotifConfig] = useState<NotificationsConfig | null>(null);
+  const [appVersion, setAppVersion] = useState('');
 
   useEffect(() => {
     ipc.healthCheck().then(setHealth).catch(() => {});
     ipc.getNotificationsConfig().then(setNotifConfig).catch(() => {});
+    ipc.getAppVersion().then(setAppVersion).catch(() => {});
   }, []);
 
   const updateNotifConfig = (updated: NotificationsConfig) => {
@@ -177,7 +179,7 @@ export default function SettingsView({ settings, onUpdate, licensePlan = 'free',
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm text-gray-600 dark:text-gray-400">
-              {t('update.currentVersion', 'Current version')}: <span className="font-mono font-medium">{settings.licenseKey ? 'v' : ''}1.0.0</span>
+              {t('update.currentVersion', 'Current version')}: <span className="font-mono font-medium">v{appVersion || '...'}</span>
             </p>
             {settings.updateLastCheck && (
               <p className="text-xs text-gray-400 mt-0.5">

@@ -1,5 +1,6 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import * as ipc from '../../lib/ipc';
 
 interface AboutModalProps {
   open: boolean;
@@ -8,6 +9,13 @@ interface AboutModalProps {
 
 export default function AboutModal({ open, onClose }: AboutModalProps) {
   const { t } = useTranslation('common');
+  const [version, setVersion] = useState('');
+
+  useEffect(() => {
+    if (open) {
+      ipc.getAppVersion().then(setVersion).catch(() => {});
+    }
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -27,7 +35,7 @@ export default function AboutModal({ open, onClose }: AboutModalProps) {
         <div className="flex flex-col items-center px-8 pt-8 pb-6 text-center">
           <img src="./icon.png" alt="Agent Hub" className="w-20 h-20 rounded-2xl shadow-lg mb-4" />
           <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">Agent Hub</h2>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">{t('about.version')}</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">Version {version || '...'}</p>
           <p className="text-xs text-gray-400 dark:text-gray-500 mt-3 leading-relaxed">
             {t('about.description')}
           </p>

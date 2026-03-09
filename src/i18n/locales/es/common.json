@@ -24,7 +24,7 @@
   "confirm.defaultConfirm": "Confirmar",
   "confirm.defaultCancel": "Cancelar",
   "project.busy": "Proyecto ocupado",
-  "about.version": "Version 1.0.0",
+  "about.version": "Version {{version}}",
   "about.description": "SDD Orchestrator — Desktop app for Spec-Driven Development with Claude Code CLI.",
   "about.copyright": "2025 Agent Hub. All rights reserved.",
   "sidebar.signIn": "Iniciar Sesion",

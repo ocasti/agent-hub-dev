@@ -185,6 +185,9 @@ export const onPluginCompatWarning = (cb: (results: PluginCompatResult[]) => voi
 export const getNotificationsConfig = (): Promise<NotificationsConfig> => api().getNotificationsConfig();
 export const updateNotificationsConfig = (config: NotificationsConfig): Promise<void> => api().updateNotificationsConfig(config);
 
+// ── App info ──
+export const getAppVersion = (): Promise<string> => api().getAppVersion();
+
 // ── Dialog ──
 export const selectFolder = (): Promise<string | null> => api().selectFolder();
 export const selectImages = (): Promise<string[]> => api().selectImages();

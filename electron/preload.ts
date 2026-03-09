@@ -186,6 +186,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getNotificationsConfig: () => ipcRenderer.invoke('notifications:getConfig'),
   updateNotificationsConfig: (config: unknown) => ipcRenderer.invoke('notifications:updateConfig', config),
 
+  // App info
+  getAppVersion: () => ipcRenderer.invoke('app:getVersion'),
+
   // Dialog
   selectFolder: () => ipcRenderer.invoke('dialog:selectFolder'),
   selectImages: () => ipcRenderer.invoke('dialog:selectImages'),
