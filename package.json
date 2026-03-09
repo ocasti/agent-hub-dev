@@ -1,7 +1,7 @@
 {
   "name": "agent-hub",
   "private": true,
-  "version": "1.5.8",
+  "version": "1.5.9",
   "description": "SDD Orchestrator — Desktop app for Spec-Driven Development with Claude Code CLI",
   "author": {
     "name": "Agent Hub",

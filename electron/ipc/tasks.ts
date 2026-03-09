@@ -119,6 +119,7 @@ export function registerTaskHandlers(ipcMain: IpcMain, db: Database.Database) {
     const row = q.getTask.get(id) as Record<string, unknown> | undefined;
     const projectPath = row?.project_path as string | undefined;
     const branchName = row?.branch_name as string | undefined;
+    const worktreePath = row?.worktree_path as string | undefined;
     const title = row?.title as string | undefined;
 
     // Delete from DB first
@@ -131,6 +132,18 @@ export function registerTaskHandlers(ipcMain: IpcMain, db: Database.Database) {
     })();
 
     if (!projectPath) return;
+
+    // ── Remove worktree if it exists ──
+    if (worktreePath && existsSync(worktreePath)) {
+      try {
+        await execFilePromise('git', ['worktree', 'remove', '--force', worktreePath], projectPath);
+      } catch {
+        // Fallback: remove directory manually
+        try { rmSync(worktreePath, { recursive: true, force: true }); } catch { /* */ }
+      }
+      // Clean up stale worktree refs
+      try { await execFilePromise('git', ['worktree', 'prune'], projectPath); } catch { /* */ }
+    }
 
     // ── Delete spec folder if it exists ──
     // Speckit creates folders like specs/001-feature-name/
