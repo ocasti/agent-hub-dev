@@ -1,4 +1,4 @@
-import type { IpcMain, BrowserWindow } from 'electron';
+import { type IpcMain, type BrowserWindow, app } from 'electron';
 import type Database from 'better-sqlite3';
 import { autoUpdater } from 'electron-updater';
 import { gt } from 'semver';
@@ -126,10 +126,22 @@ export function registerUpdateHandlers(
   });
 
   ipcMain.handle('update:install', () => {
+    console.log('[updater] update:install called, platform:', process.platform);
     // Defer to next tick so the IPC response reaches the renderer before quit
     setImmediate(() => {
-      // isSilent=false, isForceRunAfter=true (relaunch after install)
-      autoUpdater.quitAndInstall(false, true);
+      try {
+        console.log('[updater] calling quitAndInstall...');
+        autoUpdater.quitAndInstall(false, true);
+      } catch (err) {
+        console.error('[updater] quitAndInstall error:', err);
+        getWindow()?.webContents.send('update:error', `Install failed: ${(err as Error).message}`);
+      }
+      // Fallback: if quitAndInstall didn't exit within 3s, force quit
+      // (electron-updater handles relaunch via autoInstallOnAppQuit on next start)
+      setTimeout(() => {
+        console.log('[updater] quitAndInstall did not exit — forcing app.quit()');
+        app.quit();
+      }, 3000);
     });
   });
 

@@ -590,7 +590,11 @@ export default function App() {
   }, []);
 
   const handleInstallUpdate = useCallback(async () => {
-    try { await ipc.installUpdate(); } catch { /* */ }
+    try {
+      await ipc.installUpdate();
+    } catch (err) {
+      setUpdateError(`Install failed: ${(err as Error).message}`);
+    }
   }, []);
 
   const handleSkipUpdate = useCallback(async (version: string) => {
