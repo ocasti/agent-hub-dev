@@ -4,6 +4,22 @@ import Badge from './ui/Badge';
 import ProgressBar from './ui/ProgressBar';
 import { IconRuler, IconPause, IconEdit, IconCheck, IconDownload, IconCircleCheck, IconPlay } from './ui/Icons';
 
+/** Strip HTML tags and decode common entities — safety net for release notes */
+function stripHtml(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<\/li>/gi, '\n')
+    .replace(/<[^>]*>/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 interface DashboardProps {
   tasks: Task[];
   logs: Log[];
@@ -89,7 +105,7 @@ export default function Dashboard({ tasks, logs, settings, agents, updateAvailab
             </p>
             {updateAvailable.releaseNotes && (
               <p className="text-xs text-indigo-600 dark:text-indigo-400 mt-0.5 truncate">
-                {updateAvailable.releaseNotes.substring(0, 120)}
+                {stripHtml(updateAvailable.releaseNotes).substring(0, 120)}
               </p>
             )}
             {updateProgress && (
