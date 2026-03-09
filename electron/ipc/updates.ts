@@ -52,10 +52,12 @@ export function registerUpdateHandlers(
     if (win) {
       win.webContents.send('agent:log', { taskId: '__system__', projectName: 'Auto-Updater', message, kind });
     }
-    // Also persist to DB so it survives restarts (task_id NULL to avoid FK constraint)
+    // Also persist to DB so it survives restarts
+    // Note: id is INTEGER PRIMARY KEY AUTOINCREMENT — do NOT pass it, let SQLite handle it
+    // task_id is NULL to avoid FK constraint (no task associated)
     try {
-      db.prepare('INSERT INTO logs (id, task_id, project_name, message, kind, created_at) VALUES (?, NULL, ?, ?, ?, ?)')
-        .run(crypto.randomUUID(), 'Auto-Updater', message, kind, new Date().toISOString());
+      db.prepare('INSERT INTO logs (task_id, project_name, message, kind, created_at) VALUES (NULL, ?, ?, ?, ?)')
+        .run('Auto-Updater', message, kind, new Date().toISOString());
     } catch { /* logs table might not exist yet */ }
   }
 
@@ -144,26 +146,31 @@ export function registerUpdateHandlers(
     sendUpdateLog(`Installing update... (platform: ${process.platform})`);
     // Defer to next tick so the IPC response reaches the renderer before quit
     setImmediate(() => {
-      try {
-        // Remove all listeners that could block the quit sequence on macOS.
-        // quitAndInstall() emits 'close' on all windows → triggers 'window-all-closed'
-        // which can race with the update installer (ShipIt on macOS).
-        app.removeAllListeners('window-all-closed');
-        BrowserWindow.getAllWindows().forEach((win) => {
-          win.removeAllListeners('close');
-        });
+      // Remove all listeners that could block the quit sequence
+      app.removeAllListeners('window-all-closed');
+      BrowserWindow.getAllWindows().forEach((win) => {
+        win.removeAllListeners('close');
+      });
 
-        // Disable autoInstallOnAppQuit before calling quitAndInstall to avoid
-        // RACCommandErrorDomain conflict on macOS (electron-builder issue #6418)
-        autoUpdater.autoInstallOnAppQuit = false;
-
-        sendUpdateLog('Calling quitAndInstall...');
-        autoUpdater.quitAndInstall(false, true);
-      } catch (err) {
-        sendUpdateLog(`quitAndInstall failed: ${(err as Error).message}`, 'error');
-        // Force exit as last resort — use app.exit() instead of app.quit()
-        // to avoid triggering event handlers that could interfere with the installer
-        app.exit(0);
+      if (process.platform === 'darwin') {
+        // On macOS, quitAndInstall() delegates to Squirrel/ShipIt which requires
+        // proper Apple code signing. With ad-hoc signing it silently does nothing.
+        // Instead, rely on autoInstallOnAppQuit (which is true by default) —
+        // electron-updater applies the update during the before-quit event.
+        // Then relaunch the app so the user gets the new version immediately.
+        sendUpdateLog('macOS: relaunch + quit (autoInstallOnAppQuit will apply update)');
+        app.relaunch();
+        app.quit();
+      } else {
+        // On Windows/Linux, quitAndInstall works reliably
+        try {
+          sendUpdateLog('Calling quitAndInstall...');
+          autoUpdater.quitAndInstall(false, true);
+        } catch (err) {
+          sendUpdateLog(`quitAndInstall failed: ${(err as Error).message}`, 'error');
+          app.relaunch();
+          app.quit();
+        }
       }
     });
   });
