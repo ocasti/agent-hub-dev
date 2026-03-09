@@ -670,7 +670,7 @@ export default function App() {
     skills: <SkillsView projects={projects} onUpdateProject={handleUpdateProject} />,
     knowledge: <KnowledgeView projects={projects} />,
     logs: <LogsView projects={projects} />,
-    settings: <SettingsView settings={settings} onUpdate={handleUpdateSetting} licensePlan={licensePlan} onOpenLogin={() => setLoginModalOpen(true)} onLogout={handleLogout} onUpgrade={handleUpgrade} onRefreshAccount={handleRefreshAccount} />,
+    settings: <SettingsView settings={settings} onUpdate={handleUpdateSetting} onReloadSettings={loadSettings} licensePlan={licensePlan} onOpenLogin={() => setLoginModalOpen(true)} onLogout={handleLogout} onUpgrade={handleUpgrade} onRefreshAccount={handleRefreshAccount} />,
   };
 
   return (

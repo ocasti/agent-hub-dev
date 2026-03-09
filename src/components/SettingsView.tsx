@@ -15,6 +15,7 @@ const NOTIFICATION_KEYS: NotificationKey[] = [
 interface SettingsViewProps {
   settings: Settings;
   onUpdate: (key: string, value: string) => void;
+  onReloadSettings?: () => void;
   licensePlan?: TierName;
   onOpenLogin?: () => void;
   onLogout?: () => void;
@@ -22,7 +23,7 @@ interface SettingsViewProps {
   onRefreshAccount?: () => void;
 }
 
-export default function SettingsView({ settings, onUpdate, licensePlan = 'free', onOpenLogin, onLogout, onUpgrade, onRefreshAccount }: SettingsViewProps) {
+export default function SettingsView({ settings, onUpdate, onReloadSettings, licensePlan = 'free', onOpenLogin, onLogout, onUpgrade, onRefreshAccount }: SettingsViewProps) {
   const { t } = useTranslation('settings');
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [logsCleared, setLogsCleared] = useState(false);
@@ -60,6 +61,8 @@ export default function SettingsView({ settings, onUpdate, licensePlan = 'free',
     setCheckingUpdate(true);
     try {
       await ipc.checkForUpdate();
+      // Refresh settings so "Last checked" timestamp updates
+      onReloadSettings?.();
     } catch {
       // ignore
     } finally {
