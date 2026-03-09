@@ -99,7 +99,10 @@ export default function App() {
           if (incompatible.length > 0) setPluginCompatWarnings(incompatible);
         }).catch(() => {});
       }),
-      ipc.onUpdateError(() => setUpdateProgress(null)),
+      ipc.onUpdateError((err) => {
+        setUpdateProgress(null);
+        console.error('[update] Download error:', err);
+      }),
       ipc.onPluginCompatWarning((results) => {
         const incompatible = (results as PluginCompatResult[]).filter((r) => !r.compatible);
         if (incompatible.length > 0) setPluginCompatWarnings(incompatible);
@@ -575,7 +578,12 @@ export default function App() {
   }, []);
 
   const handleDownloadUpdate = useCallback(async () => {
-    try { await ipc.downloadUpdate(); } catch { /* */ }
+    try {
+      setUpdateProgress({ percent: 0, bytesPerSecond: 0, total: 0, transferred: 0 });
+      await ipc.downloadUpdate();
+    } catch {
+      setUpdateProgress(null);
+    }
   }, []);
 
   const handleInstallUpdate = useCallback(async () => {

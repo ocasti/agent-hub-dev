@@ -1,6 +1,23 @@
 import type { IpcMain, BrowserWindow } from 'electron';
 import type Database from 'better-sqlite3';
 import { autoUpdater } from 'electron-updater';
+import { gt } from 'semver';
+
+/** Strip HTML tags and decode common entities from release notes */
+function stripHtml(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<\/li>/gi, '\n')
+    .replace(/<[^>]*>/g, '')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
 
 // ── Configuration ────────────────────────────────────────────────────────────────
 
@@ -26,16 +43,30 @@ export function registerUpdateHandlers(
 
   autoUpdater.on('update-available', (info) => {
     const skipped = getSetting('update_skipped_version');
-    if (skipped && info.version === skipped) return;
+    // Only skip if the skipped version matches exactly; if a newer version
+    // is available, clear the skipped flag and show the alert
+    if (skipped) {
+      try {
+        if (gt(info.version, skipped)) {
+          setSetting('update_skipped_version', '');
+        } else if (info.version === skipped) {
+          return;
+        }
+      } catch {
+        // Invalid semver — ignore skip logic
+      }
+    }
+
+    const rawNotes = typeof info.releaseNotes === 'string'
+      ? info.releaseNotes
+      : Array.isArray(info.releaseNotes)
+        ? info.releaseNotes.map((n) => (typeof n === 'string' ? n : n.note)).join('\n')
+        : '';
 
     getWindow()?.webContents.send('update:available', {
       version: info.version,
       releaseDate: info.releaseDate || new Date().toISOString(),
-      releaseNotes: typeof info.releaseNotes === 'string'
-        ? info.releaseNotes
-        : Array.isArray(info.releaseNotes)
-          ? info.releaseNotes.map((n) => (typeof n === 'string' ? n : n.note)).join('\n')
-          : '',
+      releaseNotes: stripHtml(rawNotes),
     });
   });
 
@@ -56,9 +87,9 @@ export function registerUpdateHandlers(
     getWindow()?.webContents.send('update:downloaded', {
       version: info.version,
       releaseDate: info.releaseDate || new Date().toISOString(),
-      releaseNotes: typeof info.releaseNotes === 'string'
-        ? info.releaseNotes
-        : '',
+      releaseNotes: stripHtml(
+        typeof info.releaseNotes === 'string' ? info.releaseNotes : ''
+      ),
     });
   });
 
