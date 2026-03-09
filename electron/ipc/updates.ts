@@ -45,10 +45,24 @@ export function registerUpdateHandlers(
     db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, value);
   }
 
+  /** Send a log entry visible in the app's Logs tab */
+  function sendUpdateLog(message: string, kind: 'info' | 'ok' | 'error' = 'info') {
+    console.log(`[updater] ${message}`);
+    const win = getWindow();
+    if (win) {
+      win.webContents.send('agent:log', { taskId: '__system__', projectName: 'Auto-Updater', message, kind });
+    }
+    // Also persist to DB so it survives restarts
+    try {
+      db.prepare('INSERT INTO logs (id, task_id, project_name, message, kind, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(crypto.randomUUID(), '__system__', 'Auto-Updater', message, kind, new Date().toISOString());
+    } catch { /* logs table might not exist yet */ }
+  }
+
   // ── Forward autoUpdater events to renderer ───────────────────────────────────
 
   autoUpdater.on('update-available', (info) => {
-    console.log('[updater] update-available event:', info.version);
+    sendUpdateLog(`Update available: v${info.version}`);
     const skipped = getSetting('update_skipped_version');
     // Only skip if the skipped version matches exactly; if a newer version
     // is available, clear the skipped flag and show the alert
@@ -78,7 +92,7 @@ export function registerUpdateHandlers(
   });
 
   autoUpdater.on('update-not-available', (info) => {
-    console.log('[updater] update-not-available event:', info.version);
+    sendUpdateLog(`Already up to date (v${info.version})`);
     getWindow()?.webContents.send('update:not-available');
   });
 
@@ -92,7 +106,7 @@ export function registerUpdateHandlers(
   });
 
   autoUpdater.on('update-downloaded', (info) => {
-    console.log('[updater] update-downloaded event:', info.version);
+    sendUpdateLog(`Update v${info.version} downloaded and ready to install`, 'ok');
     getWindow()?.webContents.send('update:downloaded', {
       version: info.version,
       releaseDate: info.releaseDate || new Date().toISOString(),
@@ -103,6 +117,7 @@ export function registerUpdateHandlers(
   });
 
   autoUpdater.on('error', (err) => {
+    sendUpdateLog(`Update error: ${err.message}`, 'error');
     getWindow()?.webContents.send('update:error', err.message);
   });
 
@@ -111,11 +126,11 @@ export function registerUpdateHandlers(
   ipcMain.handle('update:check', async () => {
     setSetting('update_last_check', new Date().toISOString());
     try {
+      sendUpdateLog('Checking for updates...');
       const result = await autoUpdater.checkForUpdates();
-      console.log('[updater] checkForUpdates result:', result?.updateInfo?.version, result?.updateInfo?.files?.length, 'files');
       return { version: result?.updateInfo?.version || null };
     } catch (err) {
-      console.error('[updater] checkForUpdates error:', err);
+      sendUpdateLog(`Check failed: ${(err as Error).message}`, 'error');
       getWindow()?.webContents.send('update:error', (err as Error).message);
       return { error: (err as Error).message };
     }
@@ -126,20 +141,20 @@ export function registerUpdateHandlers(
   });
 
   ipcMain.handle('update:install', () => {
-    console.log('[updater] update:install called, platform:', process.platform);
+    sendUpdateLog(`Installing update... (platform: ${process.platform})`);
     // Defer to next tick so the IPC response reaches the renderer before quit
     setImmediate(() => {
       try {
-        console.log('[updater] calling quitAndInstall...');
+        sendUpdateLog('Calling quitAndInstall...');
         autoUpdater.quitAndInstall(false, true);
       } catch (err) {
-        console.error('[updater] quitAndInstall error:', err);
+        sendUpdateLog(`quitAndInstall failed: ${(err as Error).message}`, 'error');
         getWindow()?.webContents.send('update:error', `Install failed: ${(err as Error).message}`);
+        return;
       }
       // Fallback: if quitAndInstall didn't exit within 3s, force quit
-      // (electron-updater handles relaunch via autoInstallOnAppQuit on next start)
       setTimeout(() => {
-        console.log('[updater] quitAndInstall did not exit — forcing app.quit()');
+        sendUpdateLog('quitAndInstall did not exit — forcing app.quit()', 'error');
         app.quit();
       }, 3000);
     });
