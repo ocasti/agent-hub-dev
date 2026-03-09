@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [1.5.0] — 2026-03-09 — Worktrees V3: Auto-merge, Diff Viewer & Monorepo Support
+
+### Added
+- **Auto-merge on completion**: Worktree branches are automatically merged into the default branch when a task completes (no code-hosting plugin). Conflicts are detected and the branch is preserved for manual merge.
+- **Conflict notifications**: When creating a worktree, overlapping files with other active branches are detected and a notification is sent to the user.
+- **Worktree diff viewer**: New "Diff" button in the Dashboard worktree table shows an inline summary of changed files with additions/deletions per file and color-coded status indicators.
+- **Monorepo support**: `detectMonorepoPackages()` detects workspaces from npm/yarn `package.json`, `pnpm-workspace.yaml`, and `lerna.json`. New IPC endpoint `worktree:monorepoPackages`.
+
+### Fixed
+- **Plugin install 404**: Added `plugin-registry/**/*` and `plugins/registry/**/*` to electron-builder `files` so bundled plugins are included in production builds. Fixes "Download failed with status 404" when installing the GitHub plugin.
+
+### Removed
+- Internal `docs/PLAN-WORKTREES.md` (not user-facing, removed from repo).
+
+---
+
 ## [1.4.0] — 2026-03-09 — Worktrees V2: Conflict Detection, Symlinks & Dashboard
 
 ### Added

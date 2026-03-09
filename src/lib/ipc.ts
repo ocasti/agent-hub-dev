@@ -19,6 +19,8 @@ import type {
   NotificationsConfig,
   WorktreeInfo,
   ConflictFile,
+  WorktreeDiff,
+  MonorepoPackage,
 } from './types';
 
 const api = () => window.electronAPI;
@@ -195,6 +197,10 @@ export const mergeWorktreeBranch = (taskId: string): Promise<{ success: boolean;
   api().mergeWorktreeBranch(taskId);
 export const removeWorktreeForTask = (taskId: string): Promise<void> =>
   api().removeWorktreeForTask(taskId);
+export const getWorktreeDiff = (taskId: string): Promise<WorktreeDiff | null> =>
+  api().getWorktreeDiff(taskId);
+export const getMonorepoPackages = (projectId: string): Promise<MonorepoPackage[]> =>
+  api().getMonorepoPackages(projectId);
 
 // ── App info ──
 export const getAppVersion = (): Promise<string> => api().getAppVersion();

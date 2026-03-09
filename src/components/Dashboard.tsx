@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { Task, Log, Settings, ActiveAgent, UpdateInfo, UpdateProgress, PluginCompatResult, WorktreeInfo, LicenseLimits } from '../lib/types';
+import type { Task, Log, Settings, ActiveAgent, UpdateInfo, UpdateProgress, PluginCompatResult, WorktreeInfo, WorktreeDiff, LicenseLimits } from '../lib/types';
 import * as ipc from '../lib/ipc';
 import Badge from './ui/Badge';
 import ProgressBar from './ui/ProgressBar';
@@ -49,6 +49,8 @@ export default function Dashboard({ tasks, logs, settings, agents, updateAvailab
   const [worktrees, setWorktrees] = useState<WorktreeInfo[]>([]);
   const [merging, setMerging] = useState<string | null>(null);
   const [mergeResult, setMergeResult] = useState<{ taskId: string; success: boolean; message: string } | null>(null);
+  const [diffData, setDiffData] = useState<{ taskId: string; diff: WorktreeDiff } | null>(null);
+  const [diffLoading, setDiffLoading] = useState<string | null>(null);
 
   const loadWorktrees = useCallback(() => {
     ipc.listWorktrees().then(setWorktrees).catch(() => {});
@@ -82,6 +84,16 @@ export default function Dashboard({ tasks, logs, settings, agents, updateAvailab
       loadWorktrees();
     } catch { /* */ }
   }, [loadWorktrees]);
+
+  const handleDiff = useCallback(async (taskId: string) => {
+    if (diffData?.taskId === taskId) { setDiffData(null); return; }
+    setDiffLoading(taskId);
+    try {
+      const diff = await ipc.getWorktreeDiff(taskId);
+      if (diff) setDiffData({ taskId, diff });
+    } catch { /* */ }
+    setDiffLoading(null);
+  }, [diffData]);
 
   const agentRunning = tasks.filter(
     (t) => !['queued', 'completed', 'failed', 'pr_feedback', 'spec_feedback', 'plan_review', 'push_review', 'test_fixing'].includes(t.status)
@@ -422,6 +434,13 @@ export default function Dashboard({ tasks, logs, settings, agents, updateAvailab
                     <td className="px-4 py-2.5 text-right text-gray-400">{wt.diskSizeMB > 0 ? `${wt.diskSizeMB} MB` : '—'}</td>
                     <td className="px-4 py-2.5 text-right">
                       <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          onClick={() => handleDiff(wt.taskId)}
+                          disabled={diffLoading === wt.taskId}
+                          className={`text-[10px] font-medium px-2 py-1 rounded ${diffData?.taskId === wt.taskId ? 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400' : 'bg-gray-50 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600'} disabled:opacity-50`}
+                        >
+                          {diffLoading === wt.taskId ? '...' : t('worktree.diff', 'Diff')}
+                        </button>
                         {['completed', 'failed'].includes(wt.taskStatus) && (
                           <>
                             <button
@@ -450,6 +469,43 @@ export default function Dashboard({ tasks, logs, settings, agents, updateAvailab
                       )}
                     </td>
                   </tr>
+                  {diffData?.taskId === wt.taskId && (
+                    <tr>
+                      <td colSpan={6} className="px-4 py-3 bg-gray-50 dark:bg-gray-900/50">
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] text-gray-500">
+                              {diffData.diff.branchName} vs {diffData.diff.defaultBranch}
+                            </span>
+                            <span className="text-[10px]">
+                              <span className="text-emerald-600">+{diffData.diff.totalAdditions}</span>
+                              {' / '}
+                              <span className="text-red-500">-{diffData.diff.totalDeletions}</span>
+                              {' · '}
+                              <span className="text-gray-500">{diffData.diff.totalFiles} file(s)</span>
+                            </span>
+                          </div>
+                          <div className="max-h-48 overflow-y-auto space-y-0.5">
+                            {diffData.diff.files.map((f) => (
+                              <div key={f.file} className="flex items-center gap-2 text-[10px] font-mono py-0.5">
+                                <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                                  f.status === 'added' ? 'bg-emerald-500' :
+                                  f.status === 'deleted' ? 'bg-red-500' :
+                                  f.status === 'renamed' ? 'bg-amber-500' : 'bg-blue-500'
+                                }`} />
+                                <span className="text-gray-700 dark:text-gray-300 truncate flex-1">{f.file}</span>
+                                <span className="text-emerald-600 flex-shrink-0">+{f.additions}</span>
+                                <span className="text-red-500 flex-shrink-0">-{f.deletions}</span>
+                              </div>
+                            ))}
+                            {diffData.diff.files.length === 0 && (
+                              <p className="text-[10px] text-gray-400 italic">{t('worktree.noDiff', 'No changes found')}</p>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
                 ))}
               </tbody>
             </table>

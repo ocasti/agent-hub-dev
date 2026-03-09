@@ -9,7 +9,7 @@ import { readSettingSources } from '../skills';
 import { parsePhaseOutput, saveKnowledgeEntries } from './output-parser';
 import { buildPhasePrompt, buildFixPrompt } from './prompt-builder';
 import { prepareGitBranch, commitWipIfDirty } from './git-ops';
-import { createWorktree, setupWorktreeDepsWithSymlink, removeWorktree } from './worktree';
+import { createWorktree, setupWorktreeDepsWithSymlink, removeWorktree, mergeWorktreeBranch, detectWorktreeConflicts } from './worktree';
 import { fireHook, hasCodeHostingPlugin } from '../plugins/engine';
 import type { HookContext } from '../plugins/types';
 import { canUseModel, getEffectiveMaxReviewLoops, getMaxParallelPerProject } from '../license';
@@ -292,6 +292,18 @@ export async function orchestrateSddWorkflow(
 
         // Re-read CLAUDE.md from worktree
         projectDescription = readClaudeMd(workDir) || task.project_description || '';
+
+        // V3: Detect conflicts with other active worktrees
+        try {
+          const conflicts = await detectWorktreeConflicts(projectPath, task.project_id, db, extraEnv);
+          if (conflicts.length > 0) {
+            const summary = conflicts.slice(0, 5).map(c => `${c.file} (${c.branches.length} branches)`).join(', ');
+            sendLog(q, getWindow, taskId, projectName, `Worktree conflict warning: ${conflicts.length} file(s) modified in multiple branches: ${summary}`, 'info');
+            sendNotification('regression_detected', 'Worktree conflict detected', `${task.title} — ${conflicts.length} file(s) overlap with other active branches. Review before merging.`);
+          }
+        } catch {
+          // Non-critical — continue workflow
+        }
       } else {
         // Classic mode: branch directly in project directory
         branchName = await prepareGitBranch(
@@ -462,9 +474,23 @@ export async function orchestrateSddWorkflow(
       // Keep worktree alive for PR feedback phase
     } else {
       // No code-hosting plugin → workflow ends at Quality Gate
+      const wtPath = taskWorktreePath || task.worktree_path;
+      const branchForMerge = task.branch_name;
+
+      // Auto-merge if worktree mode
+      if (wtPath && branchForMerge) {
+        sendLog(q, getWindow, taskId, projectName, 'Auto-merge: attempting to merge branch into default...', 'info');
+        const mergeResult = await mergeWorktreeBranch(projectPath, branchForMerge, extraEnv);
+        if (mergeResult.success) {
+          sendLog(q, getWindow, taskId, projectName, `Auto-merge: ${mergeResult.message}`, 'ok');
+        } else {
+          sendLog(q, getWindow, taskId, projectName, `Auto-merge skipped: ${mergeResult.message}. Branch preserved for manual merge.`, 'info');
+          sendNotification('task_complete', 'Task completed (merge needed)', `${task.title} — Completed but branch needs manual merge.`);
+        }
+      }
+
       // Clean up worktree
-      if (taskWorktreePath || task.worktree_path) {
-        const wtPath = taskWorktreePath || task.worktree_path!;
+      if (wtPath) {
         sendLog(q, getWindow, taskId, projectName, 'Cleaning up worktree...', 'info');
         await removeWorktree(projectPath, wtPath, extraEnv).catch(() => {});
         q.updateTaskWorktree.run(null, taskId);

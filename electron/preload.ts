@@ -191,6 +191,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   detectWorktreeConflicts: (projectId: string) => ipcRenderer.invoke('worktree:detectConflicts', projectId),
   mergeWorktreeBranch: (taskId: string) => ipcRenderer.invoke('worktree:merge', taskId),
   removeWorktreeForTask: (taskId: string) => ipcRenderer.invoke('worktree:remove', taskId),
+  getWorktreeDiff: (taskId: string) => ipcRenderer.invoke('worktree:diff', taskId),
+  getMonorepoPackages: (projectId: string) => ipcRenderer.invoke('worktree:monorepoPackages', projectId),
 
   // App info
   getAppVersion: () => ipcRenderer.invoke('app:getVersion'),

@@ -164,6 +164,28 @@ export interface ConflictFile {
   branches: string[];
 }
 
+export interface WorktreeDiffFile {
+  file: string;
+  status: 'added' | 'modified' | 'deleted' | 'renamed';
+  additions: number;
+  deletions: number;
+}
+
+export interface WorktreeDiff {
+  branchName: string;
+  defaultBranch: string;
+  totalFiles: number;
+  totalAdditions: number;
+  totalDeletions: number;
+  files: WorktreeDiffFile[];
+}
+
+export interface MonorepoPackage {
+  name: string;
+  path: string;
+  hasPackageJson: boolean;
+}
+
 export interface UpdateProgress {
   percent: number;
   bytesPerSecond: number;
@@ -555,6 +577,8 @@ export interface ElectronAPI {
   detectWorktreeConflicts: (projectId: string) => Promise<ConflictFile[]>;
   mergeWorktreeBranch: (taskId: string) => Promise<{ success: boolean; message: string }>;
   removeWorktreeForTask: (taskId: string) => Promise<void>;
+  getWorktreeDiff: (taskId: string) => Promise<WorktreeDiff | null>;
+  getMonorepoPackages: (projectId: string) => Promise<MonorepoPackage[]>;
 
   // App info
   getAppVersion: () => Promise<string>;
