@@ -39,20 +39,36 @@ function getCacheKey(server: string, tool: string, args?: Record<string, unknown
 export function getMcpServerConfig(serverName: string): McpServerConfig {
   const claudeJsonPath = join(app.getPath('home'), '.claude.json');
 
-  let claudeConfig: { mcpServers?: Record<string, McpServerConfig> };
+  let claudeConfig: {
+    mcpServers?: Record<string, McpServerConfig>;
+    projects?: Record<string, { mcpServers?: Record<string, McpServerConfig> }>;
+  };
   try {
     claudeConfig = JSON.parse(readFileSync(claudeJsonPath, 'utf-8'));
   } catch {
     throw new Error(`Cannot read ~/.claude.json`);
   }
 
-  const server = claudeConfig.mcpServers?.[serverName];
-  if (!server) {
-    throw new Error(`MCP server "${serverName}" not found in ~/.claude.json`);
+  // Search in global mcpServers first
+  let server = claudeConfig.mcpServers?.[serverName];
+
+  // Fallback: search in project-level mcpServers
+  if (!server && claudeConfig.projects) {
+    for (const proj of Object.values(claudeConfig.projects)) {
+      if (proj.mcpServers?.[serverName]) {
+        server = proj.mcpServers[serverName];
+        break;
+      }
+    }
   }
 
-  if (server.type !== 'http') {
-    throw new Error(`MCP server "${serverName}" is type "${server.type}". Only HTTP servers are supported for dynamic config options.`);
+  if (!server) {
+    throw new Error(`MCP server "${serverName}" not found in ~/.claude.json (checked global and project-level configs)`);
+  }
+
+  // Accept both http and sse transports
+  if (server.type !== 'http' && server.type !== 'sse') {
+    throw new Error(`MCP server "${serverName}" is type "${server.type}". Only HTTP/SSE servers are supported for dynamic config options.`);
   }
 
   if (!server.url) {
