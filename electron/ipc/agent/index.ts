@@ -358,12 +358,12 @@ IMPORTANT: Output ONLY the acceptance criteria, one per line. No headings, no nu
     } catch (err) {
       console.error(`[analyzeRepo] Failed to write CLAUDE.md: ${(err as Error).message}. Saving to DB as fallback.`);
       // Fallback: save full content to DB description
-      q.updateProject.run(project.name, project.path, project.repo, result.claudeMdContent, project.optional_skills, (project as Record<string, unknown>).test_command ?? '', (project as Record<string, unknown>).code_hosting ?? null, (project as Record<string, unknown>).plugin_pm ?? null, (project as Record<string, unknown>).plugin_pm_config ?? '{}', project.id);
+      q.updateProject.run(project.name, project.path, project.repo, result.claudeMdContent, project.optional_skills, (project as Record<string, unknown>).test_command ?? '', (project as Record<string, unknown>).code_hosting ?? null, (project as Record<string, unknown>).code_hosting_config ?? '{}', (project as Record<string, unknown>).plugin_pm ?? null, (project as Record<string, unknown>).plugin_pm_config ?? '{}', project.id);
       return result.shortDescription;
     }
 
     // Save short description to DB
-    q.updateProject.run(project.name, project.path, project.repo, result.shortDescription, project.optional_skills, (project as Record<string, unknown>).test_command ?? '', (project as Record<string, unknown>).code_hosting ?? null, (project as Record<string, unknown>).plugin_pm ?? null, (project as Record<string, unknown>).plugin_pm_config ?? '{}', project.id);
+    q.updateProject.run(project.name, project.path, project.repo, result.shortDescription, project.optional_skills, (project as Record<string, unknown>).test_command ?? '', (project as Record<string, unknown>).code_hosting ?? null, (project as Record<string, unknown>).code_hosting_config ?? '{}', (project as Record<string, unknown>).plugin_pm ?? null, (project as Record<string, unknown>).plugin_pm_config ?? '{}', project.id);
 
     return result.shortDescription;
   });
