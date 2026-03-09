@@ -83,11 +83,22 @@ export async function createWorktree(
 
   // If worktree already exists on disk, reuse it
   if (fs.existsSync(worktreePath)) {
-    sendLog(q, getWindow, taskId, projectName, `Worktree: reusing existing at ${worktreePath}`, 'info');
-    const branch = await execFileAsync('git', ['branch', '--show-current'], worktreePath, 10000, false, extraEnv)
+    let branch = await execFileAsync('git', ['branch', '--show-current'], worktreePath, 10000, false, extraEnv)
       .then(b => b.trim())
-      .catch(() => existingBranch || 'unknown');
-    return { worktreePath, branchName: branch };
+      .catch(() => '');
+    // Fallback to the branch stored in the task if git fails (e.g. PATH issues)
+    if (!branch && existingBranch && existingBranch !== 'unknown') {
+      branch = existingBranch;
+    }
+    if (!branch) {
+      // Cannot determine branch — remove stale worktree and recreate below
+      sendLog(q, getWindow, taskId, projectName, 'Worktree: exists but cannot determine branch — will recreate.', 'info');
+      try { await execFileAsync('git', ['worktree', 'remove', '--force', worktreePath], projectPath, 30000, false, extraEnv); } catch { /* */ }
+      try { fs.rmSync(worktreePath, { recursive: true, force: true }); } catch { /* */ }
+    } else {
+      sendLog(q, getWindow, taskId, projectName, `Worktree: reusing existing at ${worktreePath} on branch ${branch}`, 'info');
+      return { worktreePath, branchName: branch };
+    }
   }
 
   // Determine branch name

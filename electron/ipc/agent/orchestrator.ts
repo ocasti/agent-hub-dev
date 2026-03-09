@@ -112,7 +112,7 @@ export async function orchestrateSddWorkflow(
     // If task already has a branch (from a previous run), switch to it before any phase.
     // This guarantees we're always working on the task's branch, even when resuming at Phase 3+.
     const freshTask = q.getTask.get(taskId) as TaskRow | undefined;
-    const savedBranch = freshTask?.branch_name;
+    const savedBranch = (freshTask?.branch_name && freshTask.branch_name !== 'unknown') ? freshTask.branch_name : null;
     if (savedBranch && startPhase > 0 && !task.worktree_path) {
       // Only needed in non-worktree mode — worktrees are already on the correct branch
       sendLog(q, getWindow, taskId, projectName, `Git: ensuring correct branch (${savedBranch}) before resuming...`, 'info');
@@ -286,10 +286,13 @@ export async function orchestrateSddWorkflow(
         workDir = projectPath;
       }
 
+      // Sanitize branch_name — 'unknown' is a sentinel from a previous bug, treat as null
+      const effectiveBranch = (task.branch_name && task.branch_name !== 'unknown') ? task.branch_name : null;
+
       if (useWorktree && !task.worktree_path) {
         // Worktree mode: create isolated worktree with its own branch
         const wt = await createWorktree(
-          projectPath, taskId, task.title, task.branch_name, q, getWindow, projectName, extraEnv
+          projectPath, taskId, task.title, effectiveBranch, q, getWindow, projectName, extraEnv
         );
         workDir = wt.worktreePath;
         branchName = wt.branchName;
