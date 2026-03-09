@@ -28,6 +28,12 @@ export function registerUpdateHandlers(
 ) {
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.logger = {
+    info: (msg: unknown) => console.log('[updater]', msg),
+    warn: (msg: unknown) => console.warn('[updater]', msg),
+    error: (msg: unknown) => console.error('[updater]', msg),
+    debug: (msg: unknown) => console.log('[updater:debug]', msg),
+  };
 
   // Helper to read settings
   function getSetting(key: string): string {

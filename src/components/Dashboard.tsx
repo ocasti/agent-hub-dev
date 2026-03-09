@@ -28,6 +28,7 @@ interface DashboardProps {
   updateAvailable?: UpdateInfo | null;
   updateProgress?: UpdateProgress | null;
   updateDownloaded?: UpdateInfo | null;
+  updateError?: string | null;
   pluginCompatWarnings?: PluginCompatResult[];
   onDownloadUpdate?: () => void;
   onInstallUpdate?: () => void;
@@ -40,7 +41,7 @@ interface DashboardProps {
   onNavigateToTask: (task: Task) => void;
 }
 
-export default function Dashboard({ tasks, logs, settings, agents, updateAvailable, updateProgress, updateDownloaded, pluginCompatWarnings, onDownloadUpdate, onInstallUpdate, onSkipUpdate, onRefineSpec, onContinueSpec, onContinuePlan, onFetchAndFix, onApproveTask, onNavigateToTask }: DashboardProps) {
+export default function Dashboard({ tasks, logs, settings, agents, updateAvailable, updateProgress, updateDownloaded, updateError, pluginCompatWarnings, onDownloadUpdate, onInstallUpdate, onSkipUpdate, onRefineSpec, onContinueSpec, onContinuePlan, onFetchAndFix, onApproveTask, onNavigateToTask }: DashboardProps) {
   const { t } = useTranslation(['dashboard', 'common', 'tasks']);
 
   const agentRunning = tasks.filter(
@@ -115,6 +116,11 @@ export default function Dashboard({ tasks, logs, settings, agents, updateAvailab
                   style={{ width: `${Math.round(updateProgress.percent)}%` }}
                 />
               </div>
+            )}
+            {updateError && (
+              <p className="text-xs text-red-600 dark:text-red-400 mt-1">
+                {t('update.error', { error: updateError, defaultValue: `Download failed: ${updateError}` })}
+              </p>
             )}
           </div>
           <div className="flex items-center gap-2 ml-4 flex-shrink-0">

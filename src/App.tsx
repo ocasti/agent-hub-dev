@@ -52,6 +52,7 @@ export default function App() {
   const [updateAvailable, setUpdateAvailable] = useState<UpdateInfo | null>(null);
   const [updateProgress, setUpdateProgress] = useState<UpdateProgress | null>(null);
   const [updateDownloaded, setUpdateDownloaded] = useState<UpdateInfo | null>(null);
+  const [updateError, setUpdateError] = useState<string | null>(null);
   const [pluginCompatWarnings, setPluginCompatWarnings] = useState<PluginCompatResult[]>([]);
 
   const setView = useCallback((v: ViewId) => {
@@ -101,7 +102,8 @@ export default function App() {
       }),
       ipc.onUpdateError((err) => {
         setUpdateProgress(null);
-        console.error('[update] Download error:', err);
+        setUpdateError(err);
+        console.error('[update] Error:', err);
       }),
       ipc.onPluginCompatWarning((results) => {
         const incompatible = (results as PluginCompatResult[]).filter((r) => !r.compatible);
@@ -579,6 +581,7 @@ export default function App() {
 
   const handleDownloadUpdate = useCallback(async () => {
     try {
+      setUpdateError(null);
       setUpdateProgress({ percent: 0, bytesPerSecond: 0, total: 0, transferred: 0 });
       await ipc.downloadUpdate();
     } catch {
@@ -626,6 +629,7 @@ export default function App() {
         updateAvailable={updateAvailable}
         updateProgress={updateProgress}
         updateDownloaded={updateDownloaded}
+        updateError={updateError}
         pluginCompatWarnings={pluginCompatWarnings}
         onDownloadUpdate={handleDownloadUpdate}
         onInstallUpdate={handleInstallUpdate}
