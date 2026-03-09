@@ -24,6 +24,7 @@ export interface TaskRow {
   criteria_status: string;
   pm_work_item_id: string | null;
   pm_work_item_url: string | null;
+  worktree_path: string | null;
 }
 
 export interface KnowledgeRow {

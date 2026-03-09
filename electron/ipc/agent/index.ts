@@ -7,7 +7,7 @@ import { createQueries } from '../../db/queries';
 import { readSettingSources } from '../skills';
 import type { TaskRow, KnowledgeRow } from './types';
 import { activeControllers, specResolvers, planResolvers, pushResolvers, fixTestsResolvers, sendLog, sendPhaseUpdate, getSettingValue } from './state';
-import { getEffectiveMaxConcurrent } from '../license';
+import { getEffectiveMaxConcurrent, getMaxParallelPerProject } from '../license';
 import { cleanEnv, execFileAsync } from './claude-cli';
 import { runRepoAnalysis } from './repo-analysis';
 import { orchestrateSddWorkflow } from './orchestrator';
@@ -29,10 +29,11 @@ export function registerAgentHandlers(
     const task = q.getTask.get(taskId) as TaskRow | undefined;
     if (!task) return;
 
-    // Check per-project limit: only 1 active task per project
+    // Check per-project limit
+    const maxParallel = getMaxParallelPerProject(db);
     const projectActive = (q.getRunningTaskCountByProject.get(task.project_id, taskId) as { count: number }).count;
-    if (projectActive > 0 && task.status === 'queued') {
-      sendLog(q, getWindow, taskId, task.project_name, `Proyecto "${task.project_name}" ya tiene una tarea activa. Espera a que termine.`, 'info');
+    if (projectActive >= maxParallel && task.status === 'queued') {
+      sendLog(q, getWindow, taskId, task.project_name, `Project "${task.project_name}" has reached its parallel task limit (${maxParallel}). Wait for a task to finish.`, 'info');
       return;
     }
 
@@ -131,8 +132,8 @@ export function registerAgentHandlers(
       // Check per-project limit
       if (task) {
         const projectActive = (q.getRunningTaskCountByProject.get(task.project_id, taskId) as { count: number }).count;
-        if (projectActive > 0) {
-          sendLog(q, getWindow, taskId, task.project_name, `Proyecto "${task.project_name}" ya tiene una tarea activa. Espera a que termine.`, 'info');
+        if (projectActive >= getMaxParallelPerProject(db)) {
+          sendLog(q, getWindow, taskId, task.project_name, `Project "${task.project_name}" has reached its parallel task limit. Wait for a task to finish.`, 'info');
           return;
         }
       }
@@ -163,8 +164,8 @@ export function registerAgentHandlers(
       const task = q.getTask.get(taskId) as TaskRow | undefined;
       if (task) {
         const projectActive = (q.getRunningTaskCountByProject.get(task.project_id, taskId) as { count: number }).count;
-        if (projectActive > 0) {
-          sendLog(q, getWindow, taskId, task.project_name, `Proyecto "${task.project_name}" ya tiene una tarea activa. Espera a que termine.`, 'info');
+        if (projectActive >= getMaxParallelPerProject(db)) {
+          sendLog(q, getWindow, taskId, task.project_name, `Project "${task.project_name}" has reached its parallel task limit. Wait for a task to finish.`, 'info');
           return;
         }
       }
@@ -189,14 +190,14 @@ export function registerAgentHandlers(
       // No active resolver — process was killed/restarted. Handle directly.
       const task = q.getTask.get(taskId) as TaskRow | undefined;
       if (!task || task.status !== 'push_review') return;
-      const projectPath = task.project_path;
+      const workDir = task.worktree_path || task.project_path;
       const projectName = task.project_name;
 
       if (action === 'reject') {
         sendLog(q, getWindow, taskId, projectName, 'Push rejected by user. Discarding local fix changes.', 'info');
         try {
-          await execFileAsync('git', ['checkout', '.'], projectPath, 10000);
-          await execFileAsync('git', ['clean', '-fd'], projectPath, 10000);
+          await execFileAsync('git', ['checkout', '.'], workDir, 10000);
+          await execFileAsync('git', ['clean', '-fd'], workDir, 10000);
         } catch { /* ignore */ }
         q.updateTaskStatus.run('pr_feedback', taskId);
         sendPhaseUpdate(getWindow, { taskId, phase: 5, phaseLabel: 'pr_feedback', status: 'completed' });
@@ -222,8 +223,8 @@ export function registerAgentHandlers(
 
       // Check per-project limit
       const projectActive = (q.getRunningTaskCountByProject.get(task.project_id, taskId) as { count: number }).count;
-      if (projectActive > 0) {
-        sendLog(q, getWindow, taskId, task.project_name, `Project "${task.project_name}" already has an active task. Wait for it to finish.`, 'info');
+      if (projectActive >= getMaxParallelPerProject(db)) {
+        sendLog(q, getWindow, taskId, task.project_name, `Project "${task.project_name}" has reached its parallel task limit. Wait for a task to finish.`, 'info');
         return;
       }
 

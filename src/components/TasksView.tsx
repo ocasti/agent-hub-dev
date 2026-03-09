@@ -71,9 +71,12 @@ export default function TasksView({
 
   const runningTasks = tasks.filter((t) => isRunning(t.status));
 
-  // A project is "busy" if ANY task is actively RUNNING (not paused, not terminal)
+  // A project is "busy" if it has reached its parallel task limit
+  const maxParallel = licenseLimits?.max_parallel_per_project ?? 1;
+  const getProjectRunningCount = (projectId: string, excludeTaskId?: string) =>
+    runningTasks.filter((t) => t.projectId === projectId && t.id !== excludeTaskId).length;
   const isProjectBusy = (projectId: string, excludeTaskId?: string) =>
-    runningTasks.some((t) => t.projectId === projectId && t.id !== excludeTaskId);
+    getProjectRunningCount(projectId, excludeTaskId) >= maxParallel;
 
   const canStartTask = (task: Task) => {
     if (runningTasks.length >= settings.maxConcurrent) return false;
@@ -286,6 +289,11 @@ export default function TasksView({
                             </span>
                           )}
                           <Badge status={task.status} />
+                          {task.worktreePath && (
+                            <span className="text-[10px] bg-cyan-50 dark:bg-cyan-900/30 text-cyan-600 dark:text-cyan-400 px-1.5 py-0.5 rounded font-medium">
+                              Worktree
+                            </span>
+                          )}
                           {task.status === 'queued' && !ag && (task.lastPhase ?? -1) <= -1 && (
                             isProjectBusy(task.projectId, task.id) ? (
                               <span className="text-xs text-gray-400 dark:text-gray-500 italic">{t('common:project.busy')}</span>

@@ -68,6 +68,7 @@ export interface Task {
   criteriaStatus: CriterionStatus[];
   pmWorkItemId?: string;
   pmWorkItemUrl?: string;
+  worktreePath?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -131,6 +132,7 @@ export interface LicenseLimits {
   models: string[];
   max_knowledge: number;
   community_plugins: boolean;
+  max_parallel_per_project: number;
 }
 
 export interface AuthResult {
@@ -391,6 +393,7 @@ export interface TaskRow {
   criteria_status: string;
   pm_work_item_id: string | null;
   pm_work_item_url: string | null;
+  worktree_path: string | null;
   created_at: string;
   updated_at: string;
 }

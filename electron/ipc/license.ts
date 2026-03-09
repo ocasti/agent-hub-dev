@@ -15,6 +15,7 @@ export interface LicenseLimits {
   models: string[];
   max_knowledge: number;
   community_plugins: boolean;
+  max_parallel_per_project: number;
 }
 
 const TIER_LIMITS: Record<TierName, LicenseLimits> = {
@@ -27,6 +28,7 @@ const TIER_LIMITS: Record<TierName, LicenseLimits> = {
     models: ['sonnet'],
     max_knowledge: 20,
     community_plugins: false,
+    max_parallel_per_project: 1,
   },
   registered: {
     max_projects: 5,
@@ -37,6 +39,7 @@ const TIER_LIMITS: Record<TierName, LicenseLimits> = {
     models: ['sonnet'],
     max_knowledge: 50,
     community_plugins: true,
+    max_parallel_per_project: 1,
   },
   premium: {
     max_projects: 999999,
@@ -47,6 +50,7 @@ const TIER_LIMITS: Record<TierName, LicenseLimits> = {
     models: ['sonnet', 'opus'],
     max_knowledge: 999999,
     community_plugins: true,
+    max_parallel_per_project: 3,
   },
 };
 
@@ -222,6 +226,11 @@ export function getEffectiveMaxReviewLoops(db: Database.Database): number {
   }
   const userSetting = parseInt(getSettingValue(db, 'max_review_loops') || '5', 10);
   return Math.min(userSetting, limits.max_review_loops);
+}
+
+export function getMaxParallelPerProject(db: Database.Database): number {
+  const limits = getCachedLimits(db);
+  return limits.max_parallel_per_project;
 }
 
 export function canInstallCommunityPlugin(db: Database.Database): boolean {

@@ -17,6 +17,7 @@ import { registerPluginHandlers } from './ipc/plugins/index';
 import { registerLicenseHandlers } from './ipc/license';
 import { registerUpdateHandlers } from './ipc/updates';
 import { registerNotificationHandlers, initNotifications } from './ipc/notifications';
+import { cleanOrphanWorktrees } from './ipc/agent/worktree';
 import i18nMain from './i18n/index';
 
 // ── Fix PATH for macOS apps launched from Finder ────────────────────────────────
@@ -231,6 +232,9 @@ app.whenReady().then(() => {
 
   // App version
   ipcMain.handle('app:getVersion', () => app.getVersion());
+
+  // Clean orphan worktrees from previous sessions
+  try { cleanOrphanWorktrees(db); } catch { /* ignore */ }
 
   // Background license validation 3s after window creation
   setTimeout(() => {

@@ -9,9 +9,10 @@ import { readSettingSources } from '../skills';
 import { parsePhaseOutput, saveKnowledgeEntries } from './output-parser';
 import { buildPhasePrompt, buildFixPrompt } from './prompt-builder';
 import { prepareGitBranch, commitWipIfDirty } from './git-ops';
+import { createWorktree, setupWorktreeDeps, removeWorktree } from './worktree';
 import { fireHook, hasCodeHostingPlugin } from '../plugins/engine';
 import type { HookContext } from '../plugins/types';
-import { canUseModel, getEffectiveMaxReviewLoops } from '../license';
+import { canUseModel, getEffectiveMaxReviewLoops, getMaxParallelPerProject } from '../license';
 import { sendNotification } from '../notifications';
 import { resolveEnvVars, getProjectAdapter } from './adapters/registry';
 
@@ -31,6 +32,7 @@ export async function orchestrateSddWorkflow(
   let taskProjectId: string | undefined;
   let taskProjectPath: string | undefined;
   let taskTitle: string | undefined;
+  let taskWorktreePath: string | undefined; // for cleanup on error
 
   try {
     const task = q.getTask.get(taskId) as TaskRow | undefined;
@@ -39,10 +41,12 @@ export async function orchestrateSddWorkflow(
     taskProjectPath = task.project_path;
     taskTitle = task.title;
 
-    const projectPath = task.project_path;
+    const projectPath = task.project_path;  // original repo (always)
+    let workDir = task.worktree_path || projectPath; // effective working directory
     const projectName = task.project_name;
-    let projectDescription = readClaudeMd(projectPath) || task.project_description || '';
+    let projectDescription = readClaudeMd(workDir) || task.project_description || '';
     const model = task.model;
+    const useWorktree = getMaxParallelPerProject(db) > 1;
 
     // Validate model against license limits
     if (!canUseModel(db, model)) throw new Error('MODEL_NOT_AVAILABLE');
@@ -78,12 +82,12 @@ export async function orchestrateSddWorkflow(
     sendLog(q, getWindow, taskId, projectName, useSpeckit ? 'Speckit commands detected (global)' : 'Speckit commands not found — using built-in spec analysis', 'info');
 
     // ── Auto-analyze repo if no CLAUDE.md exists ──────────────────────────
-    const claudeMdPath = join(projectPath, 'CLAUDE.md');
+    const claudeMdPath = join(workDir, 'CLAUDE.md');
     if (!existsSync(claudeMdPath)) {
       sendLog(q, getWindow, taskId, projectName, 'No CLAUDE.md found. Auto-analyzing repo...', 'info');
       try {
-        const skills = readSettingSources(join(projectPath, '.claude', 'settings.json'));
-        const result = await runRepoAnalysis(projectPath, undefined, skills);
+        const skills = readSettingSources(join(workDir, '.claude', 'settings.json'));
+        const result = await runRepoAnalysis(workDir, undefined, skills);
         projectDescription = result.claudeMdContent;
 
         // Write CLAUDE.md to project root
@@ -109,14 +113,14 @@ export async function orchestrateSddWorkflow(
     // This guarantees we're always working on the task's branch, even when resuming at Phase 3+.
     const freshTask = q.getTask.get(taskId) as TaskRow | undefined;
     const savedBranch = freshTask?.branch_name;
-    if (savedBranch && startPhase > 0) {
+    if (savedBranch && startPhase > 0 && !task.worktree_path) {
+      // Only needed in non-worktree mode — worktrees are already on the correct branch
       sendLog(q, getWindow, taskId, projectName, `Git: ensuring correct branch (${savedBranch}) before resuming...`, 'info');
       try {
-        const currentBranch = (await execFileAsync('git', ['branch', '--show-current'], projectPath, 30000, false, extraEnv)).trim();
+        const currentBranch = (await execFileAsync('git', ['branch', '--show-current'], workDir, 30000, false, extraEnv)).trim();
         if (currentBranch !== savedBranch) {
-          // WIP commit any uncommitted changes on current branch before switching
-          await commitWipIfDirty(projectPath, taskId, projectName, q, getWindow, extraEnv);
-          await execFileAsync('git', ['checkout', savedBranch], projectPath, 30000, false, extraEnv);
+          await commitWipIfDirty(workDir, taskId, projectName, q, getWindow, extraEnv);
+          await execFileAsync('git', ['checkout', savedBranch], workDir, 30000, false, extraEnv);
           sendLog(q, getWindow, taskId, projectName, `Git: switched to branch ${savedBranch}`, 'ok');
         } else {
           sendLog(q, getWindow, taskId, projectName, `Git: already on branch ${savedBranch}`, 'ok');
@@ -137,7 +141,7 @@ export async function orchestrateSddWorkflow(
       sendLog(q, getWindow, taskId, projectName, '── Phase 0: Spec Review ──', 'info');
 
       const prompt = buildPhasePrompt(0, task, projectDescription, knowledge, criteria, undefined, useSpeckit);
-      const { output, exitCode } = await runClaudePhase(projectPath, model, prompt, taskId, q, getWindow, controller, 300000, extraEnv);
+      const { output, exitCode } = await runClaudePhase(workDir, model, prompt, taskId, q, getWindow, controller, 300000, extraEnv);
 
       if (exitCode !== 0) {
         q.updateTaskStatus.run('failed', taskId);
@@ -215,7 +219,7 @@ export async function orchestrateSddWorkflow(
       sendLog(q, getWindow, taskId, projectName, '── Phase 1: Plan ──', 'info');
 
       const planPrompt = buildPhasePrompt(1, task, projectDescription, knowledge, criteria, undefined, useSpeckit);
-      const { output: planOutput, exitCode: planExit } = await runClaudePhase(projectPath, model, planPrompt, taskId, q, getWindow, controller, 600000, extraEnv);
+      const { output: planOutput, exitCode: planExit } = await runClaudePhase(workDir, model, planPrompt, taskId, q, getWindow, controller, 600000, extraEnv);
 
       if (planExit !== 0) {
         q.updateTaskStatus.run('failed', taskId);
@@ -271,9 +275,29 @@ export async function orchestrateSddWorkflow(
       checkAborted(controller);
       sendLog(q, getWindow, taskId, projectName, '── Git: Preparing feature branch ──', 'info');
 
-      const branchName = await prepareGitBranch(
-        projectPath, task.title, task.branch_name, taskId, projectName, q, getWindow, extraEnv
-      );
+      let branchName: string;
+
+      if (useWorktree && !task.worktree_path) {
+        // Worktree mode: create isolated worktree with its own branch
+        const wt = await createWorktree(
+          projectPath, taskId, task.title, task.branch_name, q, getWindow, projectName, extraEnv
+        );
+        workDir = wt.worktreePath;
+        branchName = wt.branchName;
+        taskWorktreePath = wt.worktreePath;
+        q.updateTaskWorktree.run(wt.worktreePath, taskId);
+
+        // Install dependencies in worktree
+        await setupWorktreeDeps(workDir, taskId, projectName, q, getWindow);
+
+        // Re-read CLAUDE.md from worktree
+        projectDescription = readClaudeMd(workDir) || task.project_description || '';
+      } else {
+        // Classic mode: branch directly in project directory
+        branchName = await prepareGitBranch(
+          workDir, task.title, task.branch_name, taskId, projectName, q, getWindow, extraEnv
+        );
+      }
 
       // Save branch name to task so resume can use it
       const freshForBranch = q.getTask.get(taskId) as TaskRow | undefined;
@@ -290,7 +314,7 @@ export async function orchestrateSddWorkflow(
     if (startPhase <= 2) {
       checkAborted(controller);
       q.updateTaskLastPhase.run(2, taskId);
-      await runSimplePhase(2, 'implementing', taskId, task, projectPath, projectName, projectDescription, model, knowledge, criteria, q, getWindow, controller, useSpeckit, extraEnv);
+      await runSimplePhase(2, 'implementing', taskId, task, workDir, projectName, projectDescription, model, knowledge, criteria, q, getWindow, controller, useSpeckit, extraEnv);
       await fireHook('on:implement_complete', { ...hookCtx, phase: 2, phaseLabel: 'implementing' }, db);
     }
 
@@ -311,7 +335,7 @@ export async function orchestrateSddWorkflow(
         await fireHook('on:review_started', { ...hookCtx, phase: 3, phaseLabel: 'reviewing', reviewLoop }, db);
 
         const prompt = buildPhasePrompt(3, task, projectDescription, knowledge, criteria, reviewLoop, useSpeckit);
-        const { output, exitCode } = await runClaudePhase(projectPath, model, prompt, taskId, q, getWindow, controller, 900000, extraEnv);
+        const { output, exitCode } = await runClaudePhase(workDir, model, prompt, taskId, q, getWindow, controller, 900000, extraEnv);
 
         if (exitCode !== 0) {
           q.updateTaskStatus.run('failed', taskId);
@@ -348,7 +372,7 @@ export async function orchestrateSddWorkflow(
 
             const issuesText = (parsed.issues || []).map((i) => `- [${i.category}] ${i.description}`).join('\n');
             const fixPrompt = buildFixPrompt(task, projectDescription, knowledge, criteria, issuesText);
-            const fixResult = await runClaudePhase(projectPath, model, fixPrompt, taskId, q, getWindow, controller, 900000, extraEnv);
+            const fixResult = await runClaudePhase(workDir, model, fixPrompt, taskId, q, getWindow, controller, 900000, extraEnv);
 
             if (fixResult.exitCode !== 0) {
               q.updateTaskStatus.run('failed', taskId);
@@ -394,7 +418,7 @@ export async function orchestrateSddWorkflow(
       await fireHook('on:ship_started', { ...hookCtx, phase: 4, phaseLabel: 'shipping' }, db);
 
       const prompt = buildPhasePrompt(4, task, projectDescription, knowledge, criteria, undefined, useSpeckit);
-      const { output, exitCode } = await runClaudePhase(projectPath, model, prompt, taskId, q, getWindow, controller, 600000, extraEnv);
+      const { output, exitCode } = await runClaudePhase(workDir, model, prompt, taskId, q, getWindow, controller, 600000, extraEnv);
 
       if (exitCode !== 0) {
         await fireHook('on:ship_failed', { ...hookCtx, phase: 4, phaseLabel: 'shipping', error: 'Ship phase failed' }, db);
@@ -435,8 +459,16 @@ export async function orchestrateSddWorkflow(
 
     if (hasCodeHosting) {
       sendLog(q, getWindow, taskId, projectName, 'SDD Workflow paused — awaiting PR review.', 'info');
+      // Keep worktree alive for PR feedback phase
     } else {
       // No code-hosting plugin → workflow ends at Quality Gate
+      // Clean up worktree
+      if (taskWorktreePath || task.worktree_path) {
+        const wtPath = taskWorktreePath || task.worktree_path!;
+        sendLog(q, getWindow, taskId, projectName, 'Cleaning up worktree...', 'info');
+        await removeWorktree(projectPath, wtPath, extraEnv).catch(() => {});
+        q.updateTaskWorktree.run(null, taskId);
+      }
       q.updateTaskStatus.run('completed', taskId);
       sendPhaseUpdate(getWindow, { taskId, phase: 3, phaseLabel: 'completed', status: 'completed' });
       sendLog(q, getWindow, taskId, projectName, 'SDD Workflow completed (no code-hosting plugin — git/PR handled manually).', 'ok');
@@ -447,10 +479,16 @@ export async function orchestrateSddWorkflow(
   } catch (err) {
     activeControllers.delete(taskId);
     if ((err as Error).name === 'AbortError') {
+      // Abort: keep worktree alive so user can resume
       sendLog(q, getWindow, taskId, '', 'Workflow aborted', 'info');
       sendNotification('workflow_aborted', 'Task stopped', `${taskTitle || 'Task'} — Workflow stopped by user.`);
       fireHook('on:workflow_aborted', { taskId, projectId: taskProjectId, projectPath: taskProjectPath, taskTitle }, db).catch(() => {});
       return;
+    }
+    // Fatal failure: clean up worktree
+    if (taskWorktreePath && taskProjectPath) {
+      removeWorktree(taskProjectPath, taskWorktreePath).catch(() => {});
+      q.updateTaskWorktree.run(null, taskId);
     }
     q.updateTaskStatus.run('failed', taskId);
     sendLog(q, getWindow, taskId, '', `Workflow failed: ${(err as Error).message}`, 'error');

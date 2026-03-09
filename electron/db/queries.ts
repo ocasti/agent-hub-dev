@@ -49,6 +49,9 @@ export function createQueries(db: Database.Database) {
     updateTaskLastPhase: db.prepare(
       'UPDATE tasks SET last_phase=?, updated_at=CURRENT_TIMESTAMP WHERE id=?'
     ),
+    updateTaskWorktree: db.prepare(
+      'UPDATE tasks SET worktree_path=?, updated_at=CURRENT_TIMESTAMP WHERE id=?'
+    ),
     updateCriteriaStatus: db.prepare(
       'UPDATE tasks SET criteria_status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?'
     ),

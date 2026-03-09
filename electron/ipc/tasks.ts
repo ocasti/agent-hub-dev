@@ -45,6 +45,7 @@ function rowToTask(row: Record<string, unknown>) {
     criteriaStatus: JSON.parse((row.criteria_status as string) || '[]'),
     pmWorkItemId: (row.pm_work_item_id as string) || undefined,
     pmWorkItemUrl: (row.pm_work_item_url as string) || undefined,
+    worktreePath: (row.worktree_path as string) || undefined,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   };

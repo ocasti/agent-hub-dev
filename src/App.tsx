@@ -44,7 +44,7 @@ export default function App() {
   const [showAbout, setShowAbout] = useState(false);
   // License & Updates
   const [licensePlan, setLicensePlan] = useState<TierName>('free');
-  const [licenseLimits, setLicenseLimits] = useState<LicenseLimits>({ max_projects: 2, max_concurrent: 1, can_configure_agents: false, max_review_loops: 2, can_configure_review_loops: false, models: ['sonnet'], max_knowledge: 20, community_plugins: false });
+  const [licenseLimits, setLicenseLimits] = useState<LicenseLimits>({ max_projects: 2, max_concurrent: 1, can_configure_agents: false, max_review_loops: 2, can_configure_review_loops: false, models: ['sonnet'], max_knowledge: 20, community_plugins: false, max_parallel_per_project: 1 });
   const [loginModalOpen, setLoginModalOpen] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
@@ -550,7 +550,7 @@ export default function App() {
   const handleLogout = useCallback(async () => {
     await ipc.logout();
     setLicensePlan('free');
-    setLicenseLimits({ max_projects: 2, max_concurrent: 1, can_configure_agents: false, max_review_loops: 2, can_configure_review_loops: false, models: ['sonnet'], max_knowledge: 20, community_plugins: false });
+    setLicenseLimits({ max_projects: 2, max_concurrent: 1, can_configure_agents: false, max_review_loops: 2, can_configure_review_loops: false, models: ['sonnet'], max_knowledge: 20, community_plugins: false, max_parallel_per_project: 1 });
     await loadSettings();
   }, []);
 

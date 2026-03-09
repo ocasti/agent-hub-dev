@@ -162,7 +162,7 @@ export const MIGRATIONS = [
       INSERT OR IGNORE INTO settings (key, value) VALUES ('license_plan', 'free');
       INSERT OR IGNORE INTO settings (key, value) VALUES ('license_email', '');
       INSERT OR IGNORE INTO settings (key, value) VALUES ('license_cached_at', '');
-      INSERT OR IGNORE INTO settings (key, value) VALUES ('license_limits', '{"max_projects":2,"max_concurrent":1,"can_configure_agents":false,"max_review_loops":2,"can_configure_review_loops":false,"models":["sonnet"],"max_knowledge":20,"community_plugins":false}');
+      INSERT OR IGNORE INTO settings (key, value) VALUES ('license_limits', '{"max_projects":2,"max_concurrent":1,"can_configure_agents":false,"max_review_loops":2,"can_configure_review_loops":false,"models":["sonnet"],"max_knowledge":20,"community_plugins":false,"max_parallel_per_project":1}');
       INSERT OR IGNORE INTO settings (key, value) VALUES ('update_auto_check', 'true');
       INSERT OR IGNORE INTO settings (key, value) VALUES ('update_last_check', '');
       INSERT OR IGNORE INTO settings (key, value) VALUES ('update_skipped_version', '');
@@ -187,6 +187,13 @@ export const MIGRATIONS = [
     name: '014_notifications',
     sql: `
       INSERT OR IGNORE INTO settings (key, value) VALUES ('notifications_config', '{"enabled":true,"keys":{"spec_needs_input":true,"plan_ready":true,"quality_pass":true,"quality_fail":true,"pr_created":true,"pr_changes_requested":true,"push_review":true,"task_complete":true,"pr_fix_pushed":true,"workflow_failed":true,"workflow_aborted":true,"regression_detected":true,"max_review_loops":true,"tests_failing":true}}');
+    `,
+  },
+  {
+    version: 15,
+    name: '015_worktree',
+    sql: `
+      ALTER TABLE tasks ADD COLUMN worktree_path TEXT DEFAULT NULL;
     `,
   },
 ];

@@ -110,6 +110,7 @@ export async function runTestFixLoop(
     if (!task) throw new Error(`Task ${taskId} not found`);
 
     const projectPath = task.project_path;
+    const workDir = task.worktree_path || projectPath;
     const projectName = task.project_name;
     const model = task.model;
     const proj = q.getProject.get(task.project_id) as { test_command?: string } | undefined;
@@ -130,7 +131,7 @@ export async function runTestFixLoop(
       checkAborted(controller);
       attempt++;
 
-      const testResult = await runNativeTests(projectPath, testCmd, taskId, projectName, q, getWindow, testTimeoutMs);
+      const testResult = await runNativeTests(workDir, testCmd, taskId, projectName, q, getWindow, testTimeoutMs);
       if (testResult.pass || testResult.timedOut) {
         fixed = true;
         break;
@@ -138,14 +139,14 @@ export async function runTestFixLoop(
 
       sendLog(q, getWindow, taskId, projectName, `Fix Tests: Claude attempting fix (${attempt}/${maxTestFixRetries})...`, 'info');
       const fixPrompt = `Tests failed. Fix ONLY the failing tests — do NOT change application logic.
-Test command: ${testCmd || detectTestCommand(projectPath) || 'npm test'}
+Test command: ${testCmd || detectTestCommand(workDir) || 'npm test'}
 Test output (last 3000 chars):
 ${testResult.output}
 
 Fix the test failures and ensure all tests pass.`;
-      await runClaudePhase(projectPath, model, fixPrompt, taskId, q, getWindow, controller, 600000);
+      await runClaudePhase(workDir, model, fixPrompt, taskId, q, getWindow, controller, 600000);
 
-      const postFixResult = await runNativeTests(projectPath, testCmd, taskId, projectName, q, getWindow, testTimeoutMs);
+      const postFixResult = await runNativeTests(workDir, testCmd, taskId, projectName, q, getWindow, testTimeoutMs);
       if (postFixResult.pass || postFixResult.timedOut) {
         fixed = true;
       }
