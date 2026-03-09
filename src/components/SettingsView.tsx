@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { Settings, HealthStatus, LicenseLimits } from '../lib/types';
+import type { Settings, HealthStatus, LicenseLimits, TierName } from '../lib/types';
 import { CORE_SKILLS } from '../lib/skills';
 import * as ipc from '../lib/ipc';
 import { IconSun, IconMoon, IconLock, IconTrash } from './ui/Icons';
@@ -8,26 +8,31 @@ import { IconSun, IconMoon, IconLock, IconTrash } from './ui/Icons';
 interface SettingsViewProps {
   settings: Settings;
   onUpdate: (key: string, value: string) => void;
-  licensePlan?: 'free' | 'pro';
+  licensePlan?: TierName;
   onOpenLogin?: () => void;
+  onLogout?: () => void;
+  onUpgrade?: () => void;
+  onRefreshAccount?: () => void;
 }
 
-export default function SettingsView({ settings, onUpdate, licensePlan = 'free', onOpenLogin }: SettingsViewProps) {
+export default function SettingsView({ settings, onUpdate, licensePlan = 'free', onOpenLogin, onLogout, onUpgrade, onRefreshAccount }: SettingsViewProps) {
   const { t } = useTranslation('settings');
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [logsCleared, setLogsCleared] = useState(false);
   const [deactivating, setDeactivating] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshDone, setRefreshDone] = useState(false);
 
   useEffect(() => {
     ipc.healthCheck().then(setHealth).catch(() => {});
   }, []);
 
-  const handleDeactivate = async () => {
+  const handleLogout = async () => {
     setDeactivating(true);
     try {
-      await ipc.deactivateLicense();
-      window.location.reload();
+      await ipc.logout();
+      if (onLogout) onLogout();
     } catch {
       // ignore
     } finally {
@@ -59,35 +64,94 @@ export default function SettingsView({ settings, onUpdate, licensePlan = 'free',
         </h4>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            {licensePlan === 'pro' ? (
+            {licensePlan === 'premium' ? (
               <span className="text-xs font-bold px-3 py-1 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white">
-                PRO
+                PREMIUM
+              </span>
+            ) : licensePlan === 'registered' ? (
+              <span className="text-xs font-bold px-3 py-1 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400">
+                REGISTERED
               </span>
             ) : (
               <span className="text-xs font-bold px-3 py-1 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-400">
                 FREE
               </span>
             )}
-            {settings.licenseEmail && (
-              <span className="text-sm text-gray-600 dark:text-gray-400">{settings.licenseEmail}</span>
+            <div className="flex flex-col">
+              {settings.licenseUsername && (
+                <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{settings.licenseUsername}</span>
+              )}
+              {settings.licenseEmail && (
+                <span className="text-xs text-gray-500 dark:text-gray-400">{settings.licenseEmail}</span>
+              )}
+            </div>
+          </div>
+          <div className="flex gap-2">
+            {licensePlan !== 'free' && (
+              <button
+                onClick={async () => {
+                  setRefreshing(true);
+                  setRefreshDone(false);
+                  try {
+                    if (onRefreshAccount) await onRefreshAccount();
+                    setRefreshDone(true);
+                    setTimeout(() => setRefreshDone(false), 3000);
+                  } finally {
+                    setRefreshing(false);
+                  }
+                }}
+                disabled={refreshing}
+                className="text-xs font-medium px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
+              >
+                {refreshing ? t('auth.refreshing', 'Refreshing...') : refreshDone ? t('auth.refreshed', 'Up to date') : t('auth.refresh', 'Refresh')}
+              </button>
+            )}
+            {licensePlan !== 'free' ? (
+              <button
+                onClick={handleLogout}
+                disabled={deactivating}
+                className="text-xs font-medium px-3 py-1.5 rounded-lg border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50"
+              >
+                {deactivating ? t('auth.loggingOut', 'Logging out...') : t('auth.logout', 'Sign Out')}
+              </button>
+            ) : (
+              <button
+                onClick={onOpenLogin}
+                className="text-xs font-medium px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700"
+              >
+                {t('auth.signIn', 'Sign In / Register')}
+              </button>
             )}
           </div>
-          {licensePlan === 'pro' ? (
-            <button
-              onClick={handleDeactivate}
-              disabled={deactivating}
-              className="text-xs font-medium px-3 py-1.5 rounded-lg border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50"
-            >
-              {deactivating ? t('license.deactivating', 'Deactivating...') : t('license.deactivate', 'Deactivate')}
-            </button>
-          ) : (
-            <button
-              onClick={onOpenLogin}
-              className="text-xs font-medium px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700"
-            >
-              {t('license.login', 'Activate License')}
-            </button>
-          )}
+        </div>
+
+        {/* Plans overview */}
+        <div className="grid grid-cols-3 gap-3 pt-2">
+          <div className={`rounded-lg border p-3 ${licensePlan === 'free' ? 'border-indigo-300 dark:border-indigo-600 bg-indigo-50/50 dark:bg-indigo-900/10' : 'border-gray-200 dark:border-gray-700'}`}>
+            <p className="text-xs font-bold text-gray-700 dark:text-gray-300">Free</p>
+            <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">2 projects, 1 agent</p>
+            <p className="text-[11px] text-gray-400 dark:text-gray-500">No registration</p>
+          </div>
+          <div className={`rounded-lg border p-3 ${licensePlan === 'registered' ? 'border-emerald-300 dark:border-emerald-600 bg-emerald-50/50 dark:bg-emerald-900/10' : 'border-gray-200 dark:border-gray-700'}`}>
+            <p className="text-xs font-bold text-gray-700 dark:text-gray-300">Registered</p>
+            <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">5 projects, 2 agents</p>
+            <p className="text-[11px] text-gray-400 dark:text-gray-500">Free account</p>
+            {licensePlan === 'free' && (
+              <button onClick={onOpenLogin} className="text-[11px] text-indigo-600 dark:text-indigo-400 font-medium mt-1.5 hover:underline">
+                {t('auth.signUpFree', 'Sign up free')}
+              </button>
+            )}
+          </div>
+          <div className={`rounded-lg border p-3 ${licensePlan === 'premium' ? 'border-purple-300 dark:border-purple-600 bg-purple-50/50 dark:bg-purple-900/10' : 'border-gray-200 dark:border-gray-700'}`}>
+            <p className="text-xs font-bold bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">Premium</p>
+            <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1">Unlimited projects</p>
+            <p className="text-[11px] text-gray-400 dark:text-gray-500">Up to 10 agents</p>
+            {licensePlan === 'registered' && (
+              <button onClick={onUpgrade} className="text-[11px] text-indigo-600 dark:text-indigo-400 font-medium mt-1.5 hover:underline">
+                {t('auth.upgradePremium', 'Upgrade')}
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -192,37 +256,79 @@ export default function SettingsView({ settings, onUpdate, licensePlan = 'free',
         {/* Max Concurrent + Default Model + Review Loops row */}
         <div className="grid grid-cols-3 gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">{t('label.maxConcurrent')}</label>
-            <input
-              type="number"
-              min={1}
-              max={8}
-              value={settings.maxConcurrent}
-              onChange={(e) => onUpdate('max_concurrent', e.target.value)}
-              className="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
-            />
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              {t('label.maxConcurrent')}
+              {licensePlan !== 'premium' && (
+                <IconLock className="w-3 h-3 inline ml-1 text-gray-400" />
+              )}
+            </label>
+            {licensePlan === 'premium' ? (
+              <input
+                type="number"
+                min={1}
+                max={10}
+                value={settings.maxConcurrent}
+                onChange={(e) => onUpdate('max_concurrent', e.target.value)}
+                className="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            ) : (
+              <div className="w-full border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400 rounded-lg px-3 py-2 text-sm cursor-default">
+                {licensePlan === 'registered' ? '2' : '1'}
+                <span className="text-xs text-gray-400 ml-2">
+                  ({licensePlan === 'free' ? t('auth.signInForMore', 'Sign in for more') : t('auth.premiumForMore', 'Premium for more')})
+                </span>
+              </div>
+            )}
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">{t('label.defaultModel')}</label>
-            <select
-              value={settings.defaultModel}
-              onChange={(e) => onUpdate('default_model', e.target.value)}
-              className="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
-            >
-              <option value="sonnet">Sonnet 4.6</option>
-              <option value="opus">Opus 4.6</option>
-            </select>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              {t('label.defaultModel')}
+              {licensePlan !== 'premium' && (
+                <IconLock className="w-3 h-3 inline ml-1 text-gray-400" />
+              )}
+            </label>
+            {licensePlan === 'premium' ? (
+              <select
+                value={settings.defaultModel}
+                onChange={(e) => onUpdate('default_model', e.target.value)}
+                className="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="sonnet">Sonnet 4.6</option>
+                <option value="opus">Opus 4.6</option>
+              </select>
+            ) : (
+              <div className="w-full border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400 rounded-lg px-3 py-2 text-sm cursor-default">
+                Sonnet 4.6
+                <span className="text-xs text-gray-400 ml-2">
+                  ({t('auth.premiumForMore', 'Premium for more')})
+                </span>
+              </div>
+            )}
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">{t('label.maxReviewLoops')}</label>
-            <input
-              type="number"
-              min={1}
-              max={20}
-              value={settings.maxReviewLoops}
-              onChange={(e) => onUpdate('max_review_loops', e.target.value)}
-              className="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
-            />
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              {t('label.maxReviewLoops')}
+              {licensePlan !== 'premium' && (
+                <IconLock className="w-3 h-3 inline ml-1 text-gray-400" />
+              )}
+            </label>
+            {licensePlan === 'premium' ? (
+              <input
+                type="number"
+                min={1}
+                max={20}
+                value={settings.maxReviewLoops}
+                onChange={(e) => onUpdate('max_review_loops', e.target.value)}
+                className="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+            ) : (
+              <div className="w-full border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400 rounded-lg px-3 py-2 text-sm cursor-default">
+                {licensePlan === 'registered' ? '3' : '2'}
+                <span className="text-xs text-gray-400 ml-2">
+                  ({licensePlan === 'free' ? t('auth.signInForMore', 'Sign in for more') : t('auth.premiumForMore', 'Premium for more')})
+                </span>
+              </div>
+            )}
             <p className="text-xs text-gray-400 mt-1">{t('maxReviewLoopsHelp')}</p>
           </div>
         </div>

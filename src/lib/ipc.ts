@@ -10,6 +10,7 @@ import type {
   AgentLogMessage,
   AgentPhaseUpdate,
   LicenseLimits,
+  AuthResult,
   UpdateInfo,
   UpdateProgress,
   PluginCompatResult,
@@ -129,12 +130,14 @@ export const previewLocalPlugin = (folderPath: string) =>
 export const installPluginFromDisk = (folderPath: string, config: Record<string, string>): Promise<void> =>
   api().installPluginFromDisk(folderPath, config);
 
-// ── License ──
-export const activateLicense = (key: string): Promise<{ plan: string; limits: LicenseLimits }> =>
-  api().activateLicense(key);
-export const validateLicense = (): Promise<{ plan: string; limits: LicenseLimits }> =>
+// ── Auth / License ──
+export const login = (username: string, password: string): Promise<AuthResult> =>
+  api().login(username, password);
+export const register = (username: string, email: string, password: string): Promise<AuthResult> =>
+  api().register(username, email, password);
+export const validateLicense = (): Promise<AuthResult> =>
   api().validateLicense();
-export const deactivateLicense = (): Promise<void> => api().deactivateLicense();
+export const logout = (): Promise<void> => api().logout();
 export const getLicenseLimits = (): Promise<LicenseLimits> => api().getLicenseLimits();
 
 // ── Updates ──
@@ -181,3 +184,5 @@ export const onPluginCompatWarning = (cb: (results: PluginCompatResult[]) => voi
 export const selectFolder = (): Promise<string | null> => api().selectFolder();
 export const selectImages = (): Promise<string[]> => api().selectImages();
 export const getGitRemote = (folderPath: string): Promise<string | null> => api().getGitRemote(folderPath);
+export const openExternal = (url: string): Promise<void> => api().openExternal(url);
+export const getPremiumUrl = (): Promise<string> => api().getPremiumUrl();

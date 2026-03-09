@@ -203,8 +203,9 @@ export function registerTaskHandlers(ipcMain: IpcMain, db: Database.Database) {
       // License
       licenseKey: (settings.license_key as string) || '',
       licenseStatus: (settings.license_status as string) || 'free',
-      licensePlan: ((settings.license_plan as string) || 'free') as 'free' | 'pro',
+      licensePlan: ((settings.license_plan as string) || 'free') as 'free' | 'registered' | 'premium',
       licenseEmail: (settings.license_email as string) || '',
+      licenseUsername: (settings.license_username as string) || '',
       licenseLimits,
       // Updates
       updateAutoCheck: (settings.update_auto_check as string) !== 'false',
@@ -218,7 +219,7 @@ export function registerTaskHandlers(ipcMain: IpcMain, db: Database.Database) {
     'thread_max_files', 'thread_max_lines', 'postfix_lines_per_comment',
     'postfix_files_per_comment', 'test_timeout_min', 'test_fix_retries',
     'branchCounter',
-    'license_key', 'license_status', 'license_plan', 'license_email',
+    'license_key', 'license_status', 'license_plan', 'license_email', 'license_username',
     'license_cached_at', 'license_limits',
     'update_auto_check', 'update_last_check', 'update_skipped_version',
   ]);

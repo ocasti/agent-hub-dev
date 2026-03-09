@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import { CORE_SKILLS } from '../lib/skills';
+import type { TierName } from '../lib/types';
 
 export type ViewId = 'dashboard' | 'tasks' | 'projects' | 'workflow' | 'plugins' | 'skills' | 'knowledge' | 'logs' | 'settings';
 
@@ -7,7 +8,7 @@ interface SidebarProps {
   view: ViewId;
   setView: (v: ViewId) => void;
   counts: { tasks: number; projects: number };
-  licensePlan?: 'free' | 'pro';
+  licensePlan?: TierName;
   onUpgrade?: () => void;
 }
 
@@ -74,18 +75,22 @@ export default function Sidebar({ view, setView, counts, licensePlan = 'free', o
           {t('sidebar.cliStatus')}
         </div>
         <div className="flex items-center gap-2 mt-1.5">
-          {licensePlan === 'pro' ? (
+          {licensePlan === 'premium' ? (
             <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 text-white">
-              PRO
+              PREMIUM
+            </span>
+          ) : licensePlan === 'registered' ? (
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-700 text-emerald-200">
+              REGISTERED
             </span>
           ) : (
             <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-700 text-gray-400">
               FREE
             </span>
           )}
-          {licensePlan === 'free' && onUpgrade && (
+          {licensePlan !== 'premium' && onUpgrade && (
             <button onClick={onUpgrade} className="text-[10px] text-indigo-400 hover:text-indigo-300 font-medium">
-              {t('sidebar.upgrade', 'Upgrade')}
+              {licensePlan === 'free' ? t('sidebar.signIn', 'Sign In') : t('sidebar.upgrade', 'Upgrade')}
             </button>
           )}
         </div>

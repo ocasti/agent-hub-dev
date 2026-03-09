@@ -1,5 +1,16 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
+/**
+ * Strip Electron's "Error invoking remote method 'channel': " prefix from IPC errors.
+ */
+function cleanIpcError(err: unknown): never {
+  if (err instanceof Error) {
+    const cleaned = err.message.replace(/^Error invoking remote method '[^']+': Error: /, '');
+    throw new Error(cleaned);
+  }
+  throw err;
+}
+
 contextBridge.exposeInMainWorld('electronAPI', {
   // Projects
   getProjects: () => ipcRenderer.invoke('projects:getAll'),
@@ -116,10 +127,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   installPluginFromDisk: (folderPath: string, config: Record<string, string>) =>
     ipcRenderer.invoke('plugins:installFromDisk', folderPath, config),
 
-  // License
-  activateLicense: (key: string) => ipcRenderer.invoke('license:activate', key),
+  // License / Auth
+  login: (username: string, password: string) =>
+    ipcRenderer.invoke('license:login', username, password).catch(cleanIpcError),
+  register: (username: string, email: string, password: string) =>
+    ipcRenderer.invoke('license:register', username, email, password).catch(cleanIpcError),
   validateLicense: () => ipcRenderer.invoke('license:validate'),
-  deactivateLicense: () => ipcRenderer.invoke('license:deactivate'),
+  logout: () => ipcRenderer.invoke('license:logout'),
   getLicenseLimits: () => ipcRenderer.invoke('license:getLimits'),
 
   // Updates
@@ -172,6 +186,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   selectFolder: () => ipcRenderer.invoke('dialog:selectFolder'),
   selectImages: () => ipcRenderer.invoke('dialog:selectImages'),
   getGitRemote: (folderPath: string) => ipcRenderer.invoke('dialog:getGitRemote', folderPath),
+  openExternal: (url: string) => ipcRenderer.invoke('dialog:openExternal', url),
+  getPremiumUrl: () => ipcRenderer.invoke('dialog:getPremiumUrl'),
 
   // Menu events
   onMenuNavigate: (callback: (route: string) => void) => {

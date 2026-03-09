@@ -120,12 +120,24 @@ export interface ReviewPattern {
   createdAt: string;
 }
 
+export type TierName = 'free' | 'registered' | 'premium';
+
 export interface LicenseLimits {
   max_projects: number;
   max_concurrent: number;
+  can_configure_agents: boolean;
+  max_review_loops: number;
+  can_configure_review_loops: boolean;
   models: string[];
   max_knowledge: number;
   community_plugins: boolean;
+}
+
+export interface AuthResult {
+  plan: TierName;
+  limits: LicenseLimits;
+  username: string;
+  email: string;
 }
 
 export interface UpdateInfo {
@@ -163,8 +175,9 @@ export interface Settings {
   // License
   licenseKey?: string;
   licenseStatus?: string;
-  licensePlan?: 'free' | 'pro';
+  licensePlan?: TierName;
   licenseEmail?: string;
+  licenseUsername?: string;
   licenseLimits?: LicenseLimits;
   // Updates
   updateAutoCheck?: boolean;
@@ -453,10 +466,11 @@ export interface ElectronAPI {
   previewLocalPlugin: (folderPath: string) => Promise<{ id: string; name: string; version: string; description: string; author?: string; capabilities: string[]; level: 1 | 2; configSchema?: PluginConfigField[] }>;
   installPluginFromDisk: (folderPath: string, config: Record<string, string>) => Promise<void>;
 
-  // License
-  activateLicense: (key: string) => Promise<{ plan: string; limits: LicenseLimits }>;
-  validateLicense: () => Promise<{ plan: string; limits: LicenseLimits }>;
-  deactivateLicense: () => Promise<void>;
+  // Auth / License
+  login: (username: string, password: string) => Promise<AuthResult>;
+  register: (username: string, email: string, password: string) => Promise<AuthResult>;
+  validateLicense: () => Promise<AuthResult>;
+  logout: () => Promise<void>;
   getLicenseLimits: () => Promise<LicenseLimits>;
 
   // Updates
@@ -489,6 +503,8 @@ export interface ElectronAPI {
   selectFolder: () => Promise<string | null>;
   selectImages: () => Promise<string[]>;
   getGitRemote: (folderPath: string) => Promise<string | null>;
+  openExternal: (url: string) => Promise<void>;
+  getPremiumUrl: () => Promise<string>;
 
   onMenuNavigate: (callback: (route: string) => void) => () => void;
   onShowAbout: (callback: () => void) => () => void;

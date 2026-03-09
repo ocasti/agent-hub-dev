@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { Project, Task, Log, Settings, ActiveAgent, LicenseLimits, UpdateInfo, UpdateProgress, PluginCompatResult } from './lib/types';
+import type { Project, Task, Log, Settings, ActiveAgent, LicenseLimits, TierName, UpdateInfo, UpdateProgress, PluginCompatResult } from './lib/types';
 import * as ipc from './lib/ipc';
 import Sidebar, { type ViewId } from './components/Sidebar';
 import Dashboard from './components/Dashboard';
@@ -43,8 +43,8 @@ export default function App() {
   const [analyzingProjectId, setAnalyzingProjectId] = useState<string | null>(null);
   const [showAbout, setShowAbout] = useState(false);
   // License & Updates
-  const [licensePlan, setLicensePlan] = useState<'free' | 'pro'>('free');
-  const [licenseLimits, setLicenseLimits] = useState<LicenseLimits>({ max_projects: 3, max_concurrent: 1, models: ['sonnet'], max_knowledge: 20, community_plugins: false });
+  const [licensePlan, setLicensePlan] = useState<TierName>('free');
+  const [licenseLimits, setLicenseLimits] = useState<LicenseLimits>({ max_projects: 2, max_concurrent: 1, can_configure_agents: false, max_review_loops: 2, can_configure_review_loops: false, models: ['sonnet'], max_knowledge: 20, community_plugins: false });
   const [loginModalOpen, setLoginModalOpen] = useState(false);
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
@@ -69,7 +69,7 @@ export default function App() {
     loadData();
     // Non-blocking license validation
     ipc.validateLicense().then((result) => {
-      setLicensePlan(result.plan as 'free' | 'pro');
+      setLicensePlan(result.plan as TierName);
       setLicenseLimits(result.limits);
     }).catch(() => {});
   }, []);
@@ -506,21 +506,65 @@ export default function App() {
     }
   }, [t]);
 
-  // License handler
-  const handleLogin = useCallback(async (key: string) => {
+  // Auth handlers
+  const handleLogin = useCallback(async (username: string, password: string) => {
     setLoginLoading(true);
     setLoginError(null);
     try {
-      const result = await ipc.activateLicense(key);
-      setLicensePlan(result.plan as 'free' | 'pro');
+      const result = await ipc.login(username, password);
+      setLicensePlan(result.plan);
       setLicenseLimits(result.limits);
       setLoginModalOpen(false);
       setLoginMessage(undefined);
       await loadSettings();
     } catch (err) {
-      setLoginError(err instanceof Error ? err.message : 'Activation failed');
+      setLoginError(err instanceof Error ? err.message : 'Login failed');
     } finally {
       setLoginLoading(false);
+    }
+  }, []);
+
+  const handleRegister = useCallback(async (username: string, email: string, password: string) => {
+    setLoginLoading(true);
+    setLoginError(null);
+    try {
+      const result = await ipc.register(username, email, password);
+      setLicensePlan(result.plan);
+      setLicenseLimits(result.limits);
+      setLoginModalOpen(false);
+      setLoginMessage(undefined);
+      await loadSettings();
+    } catch (err) {
+      setLoginError(err instanceof Error ? err.message : 'Registration failed');
+    } finally {
+      setLoginLoading(false);
+    }
+  }, []);
+
+  const handleLogout = useCallback(async () => {
+    await ipc.logout();
+    setLicensePlan('free');
+    setLicenseLimits({ max_projects: 2, max_concurrent: 1, can_configure_agents: false, max_review_loops: 2, can_configure_review_loops: false, models: ['sonnet'], max_knowledge: 20, community_plugins: false });
+    await loadSettings();
+  }, []);
+
+  const handleUpgrade = useCallback(async () => {
+    if (licensePlan === 'free') {
+      setLoginModalOpen(true);
+    } else if (licensePlan === 'registered') {
+      const url = await ipc.getPremiumUrl();
+      await ipc.openExternal(url);
+    }
+  }, [licensePlan]);
+
+  const handleRefreshAccount = useCallback(async () => {
+    try {
+      const result = await ipc.validateLicense();
+      setLicensePlan(result.plan as TierName);
+      setLicenseLimits(result.limits);
+      await loadSettings();
+    } catch {
+      // offline — keep cached tier
     }
   }, []);
 
@@ -620,12 +664,12 @@ export default function App() {
     skills: <SkillsView projects={projects} onUpdateProject={handleUpdateProject} />,
     knowledge: <KnowledgeView projects={projects} />,
     logs: <LogsView projects={projects} />,
-    settings: <SettingsView settings={settings} onUpdate={handleUpdateSetting} licensePlan={licensePlan} onOpenLogin={() => setLoginModalOpen(true)} />,
+    settings: <SettingsView settings={settings} onUpdate={handleUpdateSetting} licensePlan={licensePlan} onOpenLogin={() => setLoginModalOpen(true)} onLogout={handleLogout} onUpgrade={handleUpgrade} onRefreshAccount={handleRefreshAccount} />,
   };
 
   return (
     <div className="flex h-screen bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100 overflow-hidden">
-      <Sidebar view={view} setView={setView} counts={counts} licensePlan={licensePlan} onUpgrade={() => setLoginModalOpen(true)} />
+      <Sidebar view={view} setView={setView} counts={counts} licensePlan={licensePlan} onUpgrade={handleUpgrade} />
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Draggable title bar region for main content area */}
         <div className="h-8 flex-shrink-0 titlebar-drag" />
@@ -635,6 +679,7 @@ export default function App() {
         open={loginModalOpen}
         onClose={() => { setLoginModalOpen(false); setLoginError(null); }}
         onLogin={handleLogin}
+        onRegister={handleRegister}
         loading={loginLoading}
         error={loginError}
         message={loginMessage}

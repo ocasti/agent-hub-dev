@@ -162,7 +162,7 @@ export const MIGRATIONS = [
       INSERT OR IGNORE INTO settings (key, value) VALUES ('license_plan', 'free');
       INSERT OR IGNORE INTO settings (key, value) VALUES ('license_email', '');
       INSERT OR IGNORE INTO settings (key, value) VALUES ('license_cached_at', '');
-      INSERT OR IGNORE INTO settings (key, value) VALUES ('license_limits', '{"max_projects":3,"max_concurrent":1,"models":["sonnet"],"max_knowledge":20,"community_plugins":false}');
+      INSERT OR IGNORE INTO settings (key, value) VALUES ('license_limits', '{"max_projects":2,"max_concurrent":1,"can_configure_agents":false,"max_review_loops":2,"can_configure_review_loops":false,"models":["sonnet"],"max_knowledge":20,"community_plugins":false}');
       INSERT OR IGNORE INTO settings (key, value) VALUES ('update_auto_check', 'true');
       INSERT OR IGNORE INTO settings (key, value) VALUES ('update_last_check', '');
       INSERT OR IGNORE INTO settings (key, value) VALUES ('update_skipped_version', '');
@@ -173,6 +173,13 @@ export const MIGRATIONS = [
     name: '012_code_hosting_config',
     sql: `
       ALTER TABLE projects ADD COLUMN code_hosting_config TEXT DEFAULT '{}';
+    `,
+  },
+  {
+    version: 13,
+    name: '013_auth_username',
+    sql: `
+      INSERT OR IGNORE INTO settings (key, value) VALUES ('license_username', '');
     `,
   },
 ];

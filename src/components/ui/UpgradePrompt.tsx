@@ -46,13 +46,13 @@ export default function UpgradePrompt({ feature, currentUsage, limit, onLogin, c
             </p>
           )}
           <p className="text-xs text-amber-600 dark:text-amber-500 mt-1">
-            {t('license.upgradeHint', 'Upgrade to Pro for unlimited access.')}
+            {t('license.upgradeHint', 'Sign in or upgrade for more access.')}
           </p>
           <button
             onClick={onLogin}
             className="mt-2 text-xs font-medium px-3 py-1.5 rounded-lg bg-gradient-to-r from-indigo-600 to-purple-600 text-white hover:from-indigo-700 hover:to-purple-700"
           >
-            {t('license.upgradeButton', 'Upgrade to Pro')}
+            {t('license.upgradeButton', 'Sign In / Upgrade')}
           </button>
         </div>
       </div>

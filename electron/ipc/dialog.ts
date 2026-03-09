@@ -1,5 +1,5 @@
 import type { IpcMain, BrowserWindow } from 'electron';
-import { app, dialog } from 'electron';
+import { app, dialog, shell } from 'electron';
 import { execFile } from 'child_process';
 import fs from 'fs';
 import path from 'path';
@@ -57,6 +57,14 @@ export function registerDialogHandlers(
       imageUrls.push(`app-image://${destName}`);
     }
     return imageUrls;
+  });
+
+  ipcMain.handle('dialog:openExternal', async (_event, url: string) => {
+    await shell.openExternal(url);
+  });
+
+  ipcMain.handle('dialog:getPremiumUrl', () => {
+    return process.env.PREMIUM_URL || 'https://integral-apps.cloud/get-coffee-pod/';
   });
 
   ipcMain.handle('dialog:getGitRemote', async (_event, folderPath: string) => {

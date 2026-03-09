@@ -26,5 +26,7 @@
   "project.busy": "Proyecto ocupado",
   "about.version": "Version 1.0.0",
   "about.description": "SDD Orchestrator — Desktop app for Spec-Driven Development with Claude Code CLI.",
-  "about.copyright": "2025 Agent Hub. All rights reserved."
+  "about.copyright": "2025 Agent Hub. All rights reserved.",
+  "sidebar.signIn": "Iniciar Sesion",
+  "sidebar.upgrade": "Mejorar"
 }

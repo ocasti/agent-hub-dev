@@ -117,7 +117,7 @@ export default function ProjectForm({ project, onSave, onCancel }: ProjectFormPr
         </div>
         <div>
           <label className="block text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1">{t('form.labelRepo')}</label>
-          <input type="text" value={form.repo} onChange={(e) => setForm({ ...form, repo: e.target.value })} placeholder={t('form.placeholderRepo')} className="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500" />
+          <input type="text" value={form.repo} readOnly placeholder={t('form.placeholderRepo')} className="w-full border border-gray-200 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 text-gray-500 bg-gray-50 rounded-lg px-3 py-2 text-sm outline-none cursor-default" />
         </div>
       </div>
 

@@ -11,7 +11,7 @@ import { buildPhasePrompt, buildFixPrompt } from './prompt-builder';
 import { prepareGitBranch, commitWipIfDirty } from './git-ops';
 import { fireHook, hasCodeHostingPlugin } from '../plugins/engine';
 import type { HookContext } from '../plugins/types';
-import { canUseModel } from '../license';
+import { canUseModel, getEffectiveMaxReviewLoops } from '../license';
 import { resolveEnvVars, getProjectAdapter } from './adapters/registry';
 
 // ── SDD Workflow Orchestrator ──────────────────────────────────────────────────
@@ -51,7 +51,7 @@ export async function orchestrateSddWorkflow(
 
     const criteria = JSON.parse(task.acceptance_criteria || '[]') as string[];
     const knowledge = (q.getProjectKnowledge.all(task.project_id) || []) as KnowledgeRow[];
-    const maxReviewLoops = getSettingValue(q, 'maxReviewLoops', 5);
+    const maxReviewLoops = getEffectiveMaxReviewLoops(db);
 
     const phaseNames = ['Spec Review', 'Plan', 'Implement', 'Quality Gate', 'Ship'];
     const resumeLabel = startPhase > 0 ? ` (resuming from Phase ${startPhase}: ${phaseNames[startPhase] || startPhase})` : '';

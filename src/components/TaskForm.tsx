@@ -669,7 +669,7 @@ export default function TaskForm({ projects, task, licenseLimits, onSave, onCanc
               value="opus"
               disabled={licenseLimits ? !licenseLimits.models.includes('opus') : false}
             >
-              {t('form.modelOpus')}{licenseLimits && !licenseLimits.models.includes('opus') ? ' (Pro)' : ''}
+              {t('form.modelOpus')}{licenseLimits && !licenseLimits.models.includes('opus') ? ' (Premium)' : ''}
             </option>
           </select>
         </div>
