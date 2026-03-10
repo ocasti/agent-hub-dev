@@ -68,6 +68,113 @@ export async function commitWipIfDirty(
  * - Otherwise: checkout default branch, pull, create feature branch
  * Returns the branch name.
  */
+/**
+ * Sync the current branch with its remote counterpart (git pull).
+ * Used when changes were pushed to the branch outside the app.
+ */
+export async function syncRemoteBranch(
+  projectPath: string,
+  branchName: string,
+  taskId: string,
+  projectName: string,
+  q: Queries,
+  getWindow: GetWindow,
+  extraEnv?: Record<string, string | undefined>
+): Promise<{ success: boolean; message: string }> {
+  try {
+    // Ensure we're on the correct branch
+    const currentBranch = (await execFileAsync('git', ['branch', '--show-current'], projectPath, 30000, false, extraEnv)).trim();
+    if (currentBranch !== branchName) {
+      await execFileAsync('git', ['checkout', branchName], projectPath, 30000, false, extraEnv);
+      sendLog(q, getWindow, taskId, projectName, `Git: switched to branch ${branchName}`, 'info');
+    }
+
+    // Pull from remote
+    sendLog(q, getWindow, taskId, projectName, `Git: pulling from origin/${branchName}...`, 'info');
+    const output = await execFileAsync('git', ['pull', 'origin', branchName], projectPath, 60000, false, extraEnv);
+    const summary = output.trim().split('\n').slice(-2).join(' ');
+    sendLog(q, getWindow, taskId, projectName, `Git: sync with remote complete — ${summary}`, 'ok');
+    return { success: true, message: summary };
+  } catch (err) {
+    const msg = (err as Error).message;
+    sendLog(q, getWindow, taskId, projectName, `Git: remote sync failed — ${msg}`, 'error');
+    return { success: false, message: msg };
+  }
+}
+
+/**
+ * Sync the current branch with the parent (default) branch by merging it in.
+ * If conflicts arise, returns them so the agent can resolve them.
+ */
+export async function syncParentBranch(
+  projectPath: string,
+  branchName: string,
+  taskId: string,
+  projectName: string,
+  q: Queries,
+  getWindow: GetWindow,
+  extraEnv?: Record<string, string | undefined>
+): Promise<{ success: boolean; message: string; hasConflicts: boolean; conflictFiles: string[] }> {
+  try {
+    // Ensure we're on the feature branch
+    const currentBranch = (await execFileAsync('git', ['branch', '--show-current'], projectPath, 30000, false, extraEnv)).trim();
+    if (currentBranch !== branchName) {
+      await execFileAsync('git', ['checkout', branchName], projectPath, 30000, false, extraEnv);
+      sendLog(q, getWindow, taskId, projectName, `Git: switched to branch ${branchName}`, 'info');
+    }
+
+    // Detect default branch
+    const defaultBranch = await getDefaultBranch(projectPath, extraEnv);
+    sendLog(q, getWindow, taskId, projectName, `Git: syncing with parent branch ${defaultBranch}...`, 'info');
+
+    // Fetch latest from origin
+    try {
+      await execFileAsync('git', ['fetch', 'origin', defaultBranch], projectPath, 60000, false, extraEnv);
+      sendLog(q, getWindow, taskId, projectName, `Git: fetched latest origin/${defaultBranch}`, 'info');
+    } catch (err) {
+      sendLog(q, getWindow, taskId, projectName, `Git: fetch warning — ${(err as Error).message}. Merging with local state.`, 'info');
+    }
+
+    // Attempt merge
+    try {
+      const mergeOutput = await execFileAsync('git', ['merge', `origin/${defaultBranch}`, '--no-edit'], projectPath, 60000, false, extraEnv);
+      const summary = mergeOutput.trim().split('\n').slice(-2).join(' ');
+      sendLog(q, getWindow, taskId, projectName, `Git: merge with ${defaultBranch} complete — ${summary}`, 'ok');
+      return { success: true, message: summary, hasConflicts: false, conflictFiles: [] };
+    } catch (mergeErr) {
+      // Check if there are merge conflicts
+      const statusOutput = await execFileAsync('git', ['status', '--porcelain'], projectPath, 30000, false, extraEnv);
+      const conflictFiles = statusOutput.split('\n')
+        .filter((line) => line.startsWith('UU ') || line.startsWith('AA ') || line.startsWith('DD '))
+        .map((line) => line.substring(3).trim());
+
+      if (conflictFiles.length > 0) {
+        sendLog(q, getWindow, taskId, projectName,
+          `Git: merge conflicts detected in ${conflictFiles.length} file(s): ${conflictFiles.join(', ')}`,
+          'info'
+        );
+        return {
+          success: false,
+          message: `Merge conflicts in ${conflictFiles.length} file(s)`,
+          hasConflicts: true,
+          conflictFiles,
+        };
+      }
+
+      // Not a conflict — some other merge error
+      const msg = (mergeErr as Error).message;
+      sendLog(q, getWindow, taskId, projectName, `Git: merge failed — ${msg}`, 'error');
+      // Abort the failed merge
+      try { await execFileAsync('git', ['merge', '--abort'], projectPath, 30000, false, extraEnv); } catch { /* ignore */ }
+      return { success: false, message: msg, hasConflicts: false, conflictFiles: [] };
+    }
+  } catch (err) {
+    const msg = (err as Error).message;
+    sendLog(q, getWindow, taskId, projectName, `Git: parent sync failed — ${msg}`, 'error');
+    return { success: false, message: msg, hasConflicts: false, conflictFiles: [] };
+  }
+}
+
 export async function prepareGitBranch(
   projectPath: string,
   taskTitle: string,

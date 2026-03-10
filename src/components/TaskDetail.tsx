@@ -1,9 +1,9 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { formatTime, formatDateTime } from '../lib/format';
-import type { Task, Project, Log, ActiveAgent, CriterionStatus, Subtask, PluginCriterion } from '../lib/types';
+import type { Task, Project, Log, ActiveAgent, CriterionStatus, Subtask, PluginCriterion, InjectedAction } from '../lib/types';
 import { CORE_SKILLS } from '../lib/skills';
-import { executePluginOperation, completeSubtask, completeCriterion, refreshSubtasks } from '../lib/ipc';
+import { executePluginOperation, completeSubtask, completeCriterion, refreshSubtasks, getInjectedActions } from '../lib/ipc';
 import Badge from './ui/Badge';
 import ProgressBar from './ui/ProgressBar';
 import SkillTag from './ui/SkillTag';
@@ -24,6 +24,8 @@ interface TaskDetailProps {
   onReplan: () => void;
   onFetchAndFix: () => void;
   onApprove: () => void;
+  onSyncRemote: () => void;
+  onSyncParent: () => void;
   onApprovePush: () => void;
   onRejectPush: () => void;
   onRevisePush: (prompt: string) => void;
@@ -34,6 +36,7 @@ interface TaskDetailProps {
 export default function TaskDetail({
   task, project, agent, logs, onBack, onEdit, onStart, onStop,
   onRefineSpec, onContinueSpec, onApprovePlan, onReplan, onFetchAndFix, onApprove,
+  onSyncRemote, onSyncParent,
   onApprovePush, onRejectPush, onRevisePush, onFixTests, onDelete,
 }: TaskDetailProps) {
   const { t } = useTranslation(['tasks', 'common']);
@@ -46,6 +49,9 @@ export default function TaskDetail({
   const [localCriteria, setLocalCriteria] = useState<{ pluginId: string; id: string; description: string; completed: boolean }[] | null>(null);
   const [pmStatus, setPmStatus] = useState<string | null>(null);
   const [pmUrl, setPmUrl] = useState<string | null>(task.pmWorkItemUrl || null);
+  const [injectedActions, setInjectedActions] = useState<InjectedAction[]>([]);
+  const [actionModalPrompt, setActionModalPrompt] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const dragRef = useRef<{ startY: number; startH: number } | null>(null);
 
   // Fetch PM status when task has a PM work item linked
@@ -69,6 +75,25 @@ export default function TaskDetail({
       })
       .catch(() => { /* PM status fetch failed — non-critical */ });
   }, [task.pmWorkItemId, task.status, project?.pluginPm]);
+
+  // Fetch injected actions from plugins when task status changes
+  useEffect(() => {
+    getInjectedActions(task.id)
+      .then(setInjectedActions)
+      .catch(() => setInjectedActions([]));
+  }, [task.id, task.status]);
+
+  const handleActionClick = (action: InjectedAction) => {
+    if (!action.prompt) return;
+    if (action.mode === 'modal') {
+      setActionModalPrompt(action.prompt);
+    } else {
+      navigator.clipboard.writeText(action.prompt).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      });
+    }
+  };
 
   const onDragStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -216,11 +241,30 @@ export default function TaskDetail({
               <button onClick={onFetchAndFix} className="text-xs bg-orange-500 hover:bg-orange-600 text-white font-medium px-3 py-1.5 rounded-lg flex items-center gap-1">
                 <IconDownload className="w-3 h-3" /> {t('button.fetchAndFix')}
               </button>
+              <button onClick={onSyncRemote} className="text-xs bg-sky-500 hover:bg-sky-600 text-white font-medium px-3 py-1.5 rounded-lg flex items-center gap-1">
+                <IconRefresh className="w-3 h-3" /> {t('button.syncRemote')}
+              </button>
+              <button onClick={onSyncParent} className="text-xs bg-violet-500 hover:bg-violet-600 text-white font-medium px-3 py-1.5 rounded-lg flex items-center gap-1">
+                <IconRefresh className="w-3 h-3" /> {t('button.syncParent')}
+              </button>
               <button onClick={onApprove} className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-3 py-1.5 rounded-lg flex items-center gap-1">
                 <IconCircleCheck className="w-3 h-3" /> {t('button.approve')}
               </button>
             </>
           )}
+          {injectedActions.length > 0 && injectedActions.map((action) => (
+            <button
+              key={`${action.pluginId}-${action.actionId}`}
+              onClick={() => handleActionClick(action)}
+              className="text-xs bg-violet-600 hover:bg-violet-700 text-white font-medium px-3 py-1.5 rounded-lg flex items-center gap-1"
+              title={action.prompt ? (copied ? t('detail.copied', 'Copied!') : action.label) : action.label}
+            >
+              <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+              </svg>
+              {copied ? t('detail.copied', 'Copied!') : action.label}
+            </button>
+          ))}
           <div className="ml-auto flex items-center gap-2">
             {task.status === 'failed' && (
               <button onClick={onStart} className="text-xs bg-amber-600 hover:bg-amber-700 text-white font-medium px-3 py-1.5 rounded-lg flex items-center gap-1">
@@ -646,6 +690,41 @@ export default function TaskDetail({
           </div>
         )}
       </div>
+
+      {/* Injected Action Modal */}
+      {actionModalPrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setActionModalPrompt(null)}>
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl max-w-2xl w-full mx-4 max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">{t('detail.coworkPrompt', 'QA Prompt')}</h3>
+              <button onClick={() => setActionModalPrompt(null)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                <IconX className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-5 overflow-y-auto flex-1">
+              <pre className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap font-mono bg-gray-50 dark:bg-gray-900 rounded-lg p-4">{actionModalPrompt}</pre>
+            </div>
+            <div className="px-5 py-3 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-2">
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(actionModalPrompt);
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 2000);
+                }}
+                className="text-xs bg-violet-600 hover:bg-violet-700 text-white font-medium px-4 py-2 rounded-lg flex items-center gap-1"
+              >
+                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                </svg>
+                {copied ? t('detail.copied', 'Copied!') : t('detail.copyPrompt', 'Copy Prompt')}
+              </button>
+              <button onClick={() => setActionModalPrompt(null)} className="text-xs bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 font-medium px-4 py-2 rounded-lg">
+                {t('common:button.close', 'Close')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

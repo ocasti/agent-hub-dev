@@ -68,6 +68,15 @@ export interface PluginContextData {
   [key: string]: unknown;
 }
 
+export interface InjectedAction {
+  pluginId: string;
+  actionId: string;
+  label: string;
+  icon?: string;
+  mode: 'copy' | 'modal';
+  prompt?: string;
+}
+
 export interface Task {
   id: string;
   projectId: string;
@@ -526,6 +535,8 @@ export interface ElectronAPI {
   continuePlan: (taskId: string, action: 'approve' | 'replan') => Promise<void>;
   continuePush: (taskId: string, action: 'approve' | 'reject' | 'revise', prompt?: string) => Promise<void>;
   fixTests: (taskId: string) => Promise<void>;
+  syncRemote: (taskId: string) => Promise<{ success: boolean; message: string }>;
+  syncParent: (taskId: string) => Promise<{ success: boolean; message: string; hasConflicts: boolean; conflictFiles: string[] }>;
   analyzeRepo: (projectId: string) => Promise<string>;
   refineWithAI: (context: {
     field: 'description' | 'acceptanceCriteria';
@@ -565,6 +576,7 @@ export interface ElectronAPI {
   deactivatePluginForProject: (projectId: string, capability: string) => Promise<void>;
   checkPluginConflicts: (projectId: string, pluginId: string) => Promise<string[]>;
   executePluginAction: (pluginId: string, actionId: string, context: Record<string, string>) => Promise<unknown>;
+  getInjectedActions: (taskId: string) => Promise<InjectedAction[]>;
   getPluginCatalog: (forceRefresh?: boolean) => Promise<CatalogPlugin[]>;
   installCatalogPlugin: (pluginId: string, config: Record<string, string>) => Promise<void>;
   previewLocalPlugin: (folderPath: string) => Promise<{ id: string; name: string; version: string; description: string; author?: string; capabilities: string[]; level: 1 | 2; configSchema?: PluginConfigField[] }>;

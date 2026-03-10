@@ -67,6 +67,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Fix tests (resume from test_fixing state)
   fixTests: (taskId: string) => ipcRenderer.invoke('agent:fixTests', taskId),
 
+  // Sync branch operations (PR Feedback phase)
+  syncRemote: (taskId: string) => ipcRenderer.invoke('agent:syncRemote', taskId),
+  syncParent: (taskId: string) => ipcRenderer.invoke('agent:syncParent', taskId),
+
   // Analyze repo
   analyzeRepo: (projectId: string) => ipcRenderer.invoke('agent:analyzeRepo', projectId),
 
@@ -126,6 +130,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('plugins:checkConflicts', projectId, pluginId),
   executePluginAction: (pluginId: string, actionId: string, context: Record<string, string>) =>
     ipcRenderer.invoke('plugins:executeAction', pluginId, actionId, context),
+  getInjectedActions: (taskId: string) =>
+    ipcRenderer.invoke('plugins:getInjectedActions', taskId),
   getPluginCatalog: (forceRefresh?: boolean) =>
     ipcRenderer.invoke('plugins:catalog', forceRefresh),
   installCatalogPlugin: (pluginId: string, config: Record<string, string>) =>

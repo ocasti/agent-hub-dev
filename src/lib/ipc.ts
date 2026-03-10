@@ -73,6 +73,11 @@ export const continuePush = (taskId: string, action: 'approve' | 'reject' | 'rev
 
 export const fixTests = (taskId: string): Promise<void> => api().fixTests(taskId);
 
+export const syncRemote = (taskId: string): Promise<{ success: boolean; message: string }> =>
+  api().syncRemote(taskId);
+export const syncParent = (taskId: string): Promise<{ success: boolean; message: string; hasConflicts: boolean; conflictFiles: string[] }> =>
+  api().syncParent(taskId);
+
 export const analyzeRepo = (projectId: string): Promise<string> => api().analyzeRepo(projectId);
 
 export const refineWithAI = (context: {
@@ -135,6 +140,8 @@ export const checkPluginConflicts = (projectId: string, pluginId: string): Promi
   api().checkPluginConflicts(projectId, pluginId);
 export const executePluginAction = (pluginId: string, actionId: string, context: Record<string, string>): Promise<unknown> =>
   api().executePluginAction(pluginId, actionId, context);
+export const getInjectedActions = (taskId: string) =>
+  api().getInjectedActions(taskId);
 export const getPluginCatalog = (forceRefresh?: boolean): Promise<CatalogPlugin[]> =>
   api().getPluginCatalog(forceRefresh);
 export const installCatalogPlugin = (pluginId: string, config: Record<string, string>): Promise<void> =>

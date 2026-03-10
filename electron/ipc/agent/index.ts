@@ -13,6 +13,7 @@ import { runRepoAnalysis } from './repo-analysis';
 import { orchestrateSddWorkflow } from './orchestrator';
 import { initRegistry, getInstalledAgents, getAllAgents, checkSpeckitForAgent } from './agents';
 import { runFetchAndFix, runFetchAndFixPushOnly } from './pr-feedback';
+import { syncRemoteBranch, syncParentBranch } from './git-ops';
 import { runTestFixLoop } from './test-runner';
 import { fireHook } from '../plugins/engine';
 import { listActiveWorktrees, detectWorktreeConflicts, mergeWorktreeBranch, removeWorktree, getWorktreeDiff, detectMonorepoPackages } from './worktree';
@@ -254,6 +255,83 @@ export function registerAgentHandlers(
         q.updateTaskStatus.run('test_fixing', taskId);
       });
     }
+  });
+
+  // ── Sync Remote Branch ─────────────────────────────────────────────────────
+  ipcMain.handle('agent:syncRemote', async (_event, taskId: string) => {
+    const task = q.getTask.get(taskId) as TaskRow | undefined;
+    if (!task || !task.branch_name) return { success: false, message: 'Task or branch not found' };
+    const workDir = task.worktree_path || task.project_path;
+    const extraEnv = resolveEnvVars(task.project_id, db);
+    return syncRemoteBranch(workDir, task.branch_name, taskId, task.project_name, q, getWindow, extraEnv);
+  });
+
+  // ── Sync Parent Branch ────────────────────────────────────────────────────
+  ipcMain.handle('agent:syncParent', async (_event, taskId: string) => {
+    const task = q.getTask.get(taskId) as TaskRow | undefined;
+    if (!task || !task.branch_name) return { success: false, message: 'Task or branch not found', hasConflicts: false, conflictFiles: [] };
+    const workDir = task.worktree_path || task.project_path;
+    const extraEnv = resolveEnvVars(task.project_id, db);
+
+    const result = await syncParentBranch(workDir, task.branch_name, taskId, task.project_name, q, getWindow, extraEnv);
+
+    // If there are conflicts, launch the agent to resolve them
+    if (result.hasConflicts && result.conflictFiles.length > 0) {
+      sendLog(q, getWindow, taskId, task.project_name, 'Launching agent to resolve merge conflicts...', 'info');
+      const { resolveAgentForPhase } = await import('./agents');
+      const { primary } = resolveAgentForPhase(db, task.project_id, 2);
+      const controller = new AbortController();
+      activeControllers.set(taskId, controller);
+
+      const conflictList = result.conflictFiles.map((f) => `- ${f}`).join('\n');
+      const prompt = `You are resolving merge conflicts in a feature branch after merging the parent branch.
+
+## Conflict Files
+${conflictList}
+
+## Instructions
+1. Open each conflicted file and resolve the conflict markers (<<<<<<< / ======= / >>>>>>>)
+2. Keep BOTH the feature branch changes AND the parent branch changes where possible
+3. If changes are incompatible, prefer the feature branch changes (our work) but ensure the parent branch updates are not lost
+4. After resolving each file, run: git add <file>
+5. After ALL conflicts are resolved, run: git commit --no-edit
+6. Do NOT push. Just resolve and commit locally.
+
+Resolve all conflicts now.`;
+
+      try {
+        q.updateTaskStatus.run('pr_fixing', taskId);
+        const { exitCode } = await primary.runPhase({
+          projectPath: workDir,
+          model: task.model,
+          prompt,
+          taskId,
+          q,
+          getWindow,
+          controller,
+          timeoutMs: 300000,
+          extraEnv,
+        });
+
+        activeControllers.delete(taskId);
+        q.updateTaskStatus.run('pr_feedback', taskId);
+
+        if (exitCode === 0) {
+          sendLog(q, getWindow, taskId, task.project_name, 'Merge conflicts resolved successfully by agent', 'ok');
+          return { success: true, message: 'Conflicts resolved by agent', hasConflicts: false, conflictFiles: [] };
+        } else {
+          sendLog(q, getWindow, taskId, task.project_name, 'Agent failed to resolve conflicts. Manual intervention needed.', 'error');
+          return { success: false, message: 'Agent failed to resolve conflicts', hasConflicts: true, conflictFiles: result.conflictFiles };
+        }
+      } catch (err) {
+        activeControllers.delete(taskId);
+        q.updateTaskStatus.run('pr_feedback', taskId);
+        sendLog(q, getWindow, taskId, task.project_name, `Conflict resolution error: ${(err as Error).message}`, 'error');
+        return { success: false, message: (err as Error).message, hasConflicts: true, conflictFiles: result.conflictFiles };
+      }
+    }
+
+    return result;
   });
 
   // ── Refine with AI ──────────────────────────────────────────────────────────

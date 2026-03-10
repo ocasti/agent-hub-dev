@@ -506,6 +506,26 @@ export default function App() {
     }
   }, []);
 
+  const handleSyncRemote = useCallback(async (task: Task) => {
+    try {
+      await ipc.syncRemote(task.id);
+      await loadTasks();
+      await loadLogs();
+    } catch {
+      // error
+    }
+  }, []);
+
+  const handleSyncParent = useCallback(async (task: Task) => {
+    try {
+      await ipc.syncParent(task.id);
+      await loadTasks();
+      await loadLogs();
+    } catch {
+      // error
+    }
+  }, []);
+
   const handleApproveTask = useCallback(async (task: Task) => {
     try {
       await ipc.updateTask(task.id, { status: 'completed' });
@@ -675,6 +695,8 @@ export default function App() {
         onContinuePlan={handleContinuePlan}
         onFetchAndFix={handleFetchAndFix}
         onApproveTask={handleApproveTask}
+        onSyncRemote={handleSyncRemote}
+        onSyncParent={handleSyncParent}
         onApprovePush={handleApprovePush}
         onRejectPush={handleRejectPush}
         onRevisePush={handleRevisePush}

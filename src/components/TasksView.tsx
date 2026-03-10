@@ -29,6 +29,8 @@ interface TasksViewProps {
   onContinuePlan: (task: Task, action: 'approve' | 'replan') => void;
   onFetchAndFix: (task: Task) => void;
   onApproveTask: (task: Task) => void;
+  onSyncRemote?: (task: Task) => void;
+  onSyncParent?: (task: Task) => void;
   onApprovePush?: (task: Task) => void;
   onRejectPush?: (task: Task) => void;
   onRevisePush?: (task: Task, prompt: string) => void;
@@ -38,7 +40,7 @@ interface TasksViewProps {
 export default function TasksView({
   tasks, projects, logs, agents, settings, licenseLimits, pendingEditTaskId, pendingDetailTaskId, onClearPendingEdit, onClearPendingDetail,
   onCreateTask, onUpdateTask, onDeleteTask, onStartTask, onStopTask, onContinueSpec, onContinuePlan, onFetchAndFix, onApproveTask,
-  onApprovePush, onRejectPush, onRevisePush, onFixTests,
+  onSyncRemote, onSyncParent, onApprovePush, onRejectPush, onRevisePush, onFixTests,
 }: TasksViewProps) {
   const { t } = useTranslation(['tasks', 'common', 'workflow']);
   const [creating, setCreating] = useState(false);
@@ -176,6 +178,8 @@ export default function TasksView({
         onReplan={() => { onContinuePlan(detailTask, 'replan'); }}
         onFetchAndFix={() => { if (canStartTask(detailTask)) { onFetchAndFix(detailTask); } }}
         onApprove={() => { onApproveTask(detailTask); }}
+        onSyncRemote={() => { onSyncRemote?.(detailTask); }}
+        onSyncParent={() => { onSyncParent?.(detailTask); }}
         onApprovePush={() => { onApprovePush?.(detailTask); }}
         onRejectPush={() => { onRejectPush?.(detailTask); }}
         onRevisePush={(prompt: string) => { onRevisePush?.(detailTask, prompt); }}

@@ -22,6 +22,8 @@
   "button.fetchAndFix": "Fetch & Fix",
   "button.fixTests": "Fix Tests",
   "button.approve": "Approve",
+  "button.syncRemote": "Sync Remote",
+  "button.syncParent": "Sync Parent",
   "testsFailingPaused": "Tests failing — paused for manual intervention",
   "specNeedsRefinement": "Spec needs refinement",
   "planReadyForApproval": "Plan ready for approval",
