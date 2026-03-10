@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 import type { TaskRow, KnowledgeRow, Queries, GetWindow } from './types';
-import { activeControllers, sendLog, sendPhaseUpdate, checkAborted, getSettingValue, waitForPushApproval, waitForFixTests } from './state';
+import { activeControllers, sendLog, sendPhaseUpdate, checkAborted, getSettingValue, waitForPushApproval, waitForFixTests, resolveWorkDir } from './state';
 import { execFileAsync } from './claude-cli';
 import { runAgentPhase } from './agents';
 import { readAgentMd } from './repo-analysis';
@@ -13,8 +13,9 @@ import { runNativeTests, detectTestCommand } from './test-runner';
 import { execGraphQL } from './claude-cli';
 import { fireHook } from '../plugins/engine';
 import type { HookContext } from '../plugins/types';
-import { resolveEnvVars } from './adapters/registry';
+import { resolveEnvVars, getProjectAdapter } from './adapters/registry';
 import { sendNotification } from '../notifications';
+import type { CICheckResult } from './types';
 
 // ── Fetch & Fix (PR Feedback → re-run phases 2-4) ─────────────────────────────
 
@@ -33,7 +34,7 @@ export async function runFetchAndFix(
     if (!task.pr_number) throw new Error('No PR number on task');
 
     const projectPath = task.project_path;
-    const workDir = task.worktree_path || projectPath;
+    const workDir = resolveWorkDir(task, db);
     const projectName = task.project_name;
     const projectDescription = readAgentMd(workDir) || task.project_description || '';
     const model = task.model;
@@ -117,10 +118,37 @@ export async function runFetchAndFix(
       }
     } catch { /* ignore — baseline stays 0 */ }
 
-    // Fetch PR feedback: general comments + unresolved review threads (structured)
-    const feedback = await fetchUnresolvedPrFeedback(
-      projectPath, task.pr_number, taskId, projectName, q, getWindow, extraEnv
-    );
+    // Fetch PR feedback AND CI status in parallel
+    const adapter = getProjectAdapter(task.project_id, db);
+    const [feedback, ciResult] = await Promise.all([
+      fetchUnresolvedPrFeedback(
+        projectPath, task.pr_number, taskId, projectName, q, getWindow, extraEnv
+      ),
+      adapter
+        ? adapter.fetchCIStatus({ projectPath, prNumber: task.pr_number }, extraEnv || {})
+        : Promise.resolve({ status: 'unknown', summary: 'No code hosting adapter' } as CICheckResult),
+    ]);
+
+    // ── Handle CI status ──────────────────────────────────────────────────
+    if (ciResult.status === 'pending') {
+      const pendingNames = ciResult.pendingChecks?.join(', ') || 'unknown checks';
+      sendLog(q, getWindow, taskId, projectName, `CI still running (${pendingNames}). Retry Fetch & Fix after CI completes.`, 'info');
+      sendNotification('ci_pending', 'CI still running', `${task.title} — waiting for CI to complete before fixing.`);
+      q.updateTaskStatus.run('pr_feedback', taskId);
+      sendPhaseUpdate(getWindow, { taskId, phase: 5, phaseLabel: 'pr_feedback', status: 'completed' });
+      activeControllers.delete(taskId);
+      return;
+    }
+
+    if (ciResult.status === 'fail') {
+      sendLog(q, getWindow, taskId, projectName, `CI FAILED: ${ciResult.summary}. Failure logs will be included in fix context.`, 'error');
+    } else if (ciResult.status === 'pass') {
+      sendLog(q, getWindow, taskId, projectName, `CI passed: ${ciResult.summary}`, 'ok');
+    } else {
+      sendLog(q, getWindow, taskId, projectName, `CI status: ${ciResult.summary}`, 'info');
+    }
+
+    const ciFailureLogs = ciResult.status === 'fail' ? ciResult.failureLogs : undefined;
 
     const totalItems = feedback.threads.length + (feedback.generalComments.trim() ? 1 : 0);
 
@@ -307,7 +335,7 @@ export async function runFetchAndFix(
       const prompt = buildSingleThreadPrompt(task, projectDescription, knowledge, criteria, {
         type: 'general',
         content: feedback.generalComments,
-      }, undefined, branchHistory, prFiles);
+      }, undefined, branchHistory, prFiles, ciFailureLogs);
       const { output, exitCode } = await runAgentPhase(db, task.project_id, 5, {
         projectPath: workDir, model, prompt, taskId, q, getWindow, controller, timeoutMs: 600000, extraEnv,
       });
@@ -369,7 +397,7 @@ export async function runFetchAndFix(
       const prompt = buildSingleThreadPrompt(task, projectDescription, knowledge, criteria, {
         type: 'thread',
         thread,
-      }, previousActions, branchHistory, prFiles);
+      }, previousActions, branchHistory, prFiles, ciFailureLogs);
       const { output, exitCode } = await runAgentPhase(db, task.project_id, 5, {
         projectPath: workDir, model, prompt, taskId, q, getWindow, controller, timeoutMs: 600000, extraEnv,
       });
@@ -635,10 +663,15 @@ Fix the test failures and ensure all tests pass.`;
       fail: 'Tests failing',
     };
     const testIcon = testStatus === 'pass' ? '✅' : testStatus === 'fixed' ? '🔧' : testStatus === 'timeout' ? '⏱️' : testStatus === 'no_command' ? '⚠️' : '❌';
+    const ciIcon = ciResult.status === 'pass' ? '✅' : ciResult.status === 'fail' ? '❌' : '⚠️';
+    const ciLine = `${ciIcon} ${ciResult.status === 'fail' ? `CI Failed: ${ciResult.summary}` : ciResult.status === 'pass' ? `CI Passed: ${ciResult.summary}` : `CI: ${ciResult.summary}`}`;
     const pushSummary = [
       `## Fetch & Fix Summary (Cycle ${task.review_cycle + 1})`,
       ``,
       `**${accepted} accepted** | **${rejected} rejected**`,
+      ``,
+      `### CI/Pipeline:`,
+      ciLine,
       ``,
       `### Changes:`,
       ...threadSummaries.map(s => s),
@@ -779,7 +812,7 @@ export async function runFetchAndFixPushOnly(
     if (!task) throw new Error(`Task ${taskId} not found`);
 
     const projectPath = task.project_path;
-    const workDir = task.worktree_path || projectPath;
+    const workDir = resolveWorkDir(task, db);
     const projectName = task.project_name;
     const model = task.model;
 

@@ -79,6 +79,20 @@ export type ThreadPromptInput =
 
 export type GetWindow = () => BrowserWindow | null;
 
+// ── CI / Pipeline Status ────────────────────────────────────────────────────────
+
+export type CIStatus = 'pass' | 'fail' | 'pending' | 'unknown';
+
+export interface CICheckResult {
+  status: CIStatus;
+  /** Summary line, e.g. "3/5 checks passed, 2 failed" */
+  summary: string;
+  /** Failure logs from failed runs (truncated) */
+  failureLogs?: string;
+  /** Names of checks still running (when status is 'pending') */
+  pendingChecks?: string[];
+}
+
 // Phase number → task status mapping
 export const PHASE_STATUS: Record<number, string> = {
   0: 'spec_review',

@@ -421,7 +421,8 @@ export function buildSingleThreadPrompt(
   input: ThreadPromptInput,
   previousActions?: string[],
   branchHistory?: string,
-  prFiles?: string
+  prFiles?: string,
+  ciFailureLogs?: string
 ): string {
   const knowledgeSection = buildKnowledgeSection(knowledge);
   const criteriaText = buildCriteriaSection(criteria);
@@ -466,8 +467,16 @@ ${previousActions.join('\n')}
 IMPORTANT: If this comment asks you to undo, remove, or contradict something that was already applied above, DO NOT blindly apply it. Instead, flag the contradiction in your [THREAD_REPLY] and explain which approach is correct based on the spec and acceptance criteria.\n`
     : '';
 
+  const ciSection = ciFailureLogs
+    ? `\n## CI/Pipeline Failures
+The CI pipeline has FAILED. The failure logs are below. If the reviewer comment is related to a CI failure, fix it. If not, still be aware of these failures as context:
+\`\`\`
+${ciFailureLogs}
+\`\`\`\n`
+    : '';
+
   return `You are an SDD agent addressing a single PR review comment. Focus ONLY on this specific issue.
-${projectCtx}${branchHistorySection}${prevActionsSection}
+${projectCtx}${branchHistorySection}${ciSection}${prevActionsSection}
 ### Task: ${task.title}
 
 ### Acceptance Criteria:

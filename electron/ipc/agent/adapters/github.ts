@@ -9,12 +9,13 @@ import type {
   CreatePROptions,
   CreatePRResult,
   FetchFeedbackOptions,
+  FetchCIStatusOptions,
   PostRepliesOptions,
   ResolveThreadsOptions,
   MinimizeOptions,
   PushOptions,
 } from './types';
-import type { Queries, GetWindow, FetchedPrFeedback } from '../types';
+import type { Queries, GetWindow, FetchedPrFeedback, CICheckResult } from '../types';
 import { execFileAsync } from '../claude-cli';
 import {
   fetchUnresolvedPrFeedback,
@@ -142,6 +143,94 @@ export class GitHubAdapter implements CodeHostingAdapter {
       () => null,
       env
     );
+  }
+
+  async fetchCIStatus(
+    options: FetchCIStatusOptions,
+    env: CodeHostingEnvVars
+  ): Promise<CICheckResult> {
+    const { projectPath, prNumber } = options;
+    const MAX_LOG_CHARS = 5000;
+
+    try {
+      // gh pr checks --json fields: name, state, link
+      // state values: SUCCESS, FAILURE, PENDING, QUEUED, STARTUP_FAILURE, etc.
+      const checksJson = await execFileAsync(
+        'gh',
+        ['pr', 'checks', String(prNumber), '--json', 'name,state,link'],
+        projectPath,
+        30000,
+        false,
+        env
+      );
+
+      const checks = JSON.parse(checksJson.trim()) as {
+        name: string;
+        state: string;
+        link: string;
+      }[];
+
+      if (checks.length === 0) {
+        return { status: 'unknown', summary: 'No CI checks configured' };
+      }
+
+      const pending = checks.filter((c) => c.state === 'PENDING' || c.state === 'QUEUED');
+      const failed = checks.filter((c) => c.state === 'FAILURE' || c.state === 'STARTUP_FAILURE');
+      const passed = checks.filter((c) => c.state === 'SUCCESS' || c.state === 'NEUTRAL' || c.state === 'SKIPPED');
+
+      if (pending.length > 0) {
+        return {
+          status: 'pending',
+          summary: `${pending.length}/${checks.length} checks still running`,
+          pendingChecks: pending.map((c) => c.name),
+        };
+      }
+
+      if (failed.length > 0) {
+        let failureLogs = '';
+        // Extract run IDs from link (pattern: /actions/runs/12345)
+        const runIds = new Set<string>();
+        for (const check of failed) {
+          const match = check.link?.match(/\/actions\/runs\/(\d+)/);
+          if (match) runIds.add(match[1]);
+        }
+
+        for (const runId of runIds) {
+          if (failureLogs.length >= MAX_LOG_CHARS) break;
+          try {
+            const logs = await execFileAsync(
+              'gh',
+              ['run', 'view', runId, '--log-failed'],
+              projectPath,
+              30000,
+              false,
+              env
+            );
+            failureLogs += `\n--- Run ${runId} ---\n${logs}`;
+          } catch {
+            // Some runs may not have logs (e.g. third-party checks)
+          }
+        }
+
+        if (failureLogs.length > MAX_LOG_CHARS) {
+          failureLogs = failureLogs.slice(-MAX_LOG_CHARS);
+          failureLogs = '... [truncated]\n' + failureLogs;
+        }
+
+        return {
+          status: 'fail',
+          summary: `${failed.length}/${checks.length} checks failed: ${failed.map((c) => c.name).join(', ')}`,
+          failureLogs: failureLogs.trim() || undefined,
+        };
+      }
+
+      return {
+        status: 'pass',
+        summary: `${passed.length}/${checks.length} checks passed`,
+      };
+    } catch {
+      return { status: 'unknown', summary: 'Could not fetch CI status' };
+    }
   }
 
   async push(

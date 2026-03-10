@@ -2,7 +2,7 @@ import type Database from 'better-sqlite3';
 import { existsSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import type { TaskRow, KnowledgeRow, Queries, GetWindow } from './types';
-import { activeControllers, sendLog, sendPhaseUpdate, checkAborted, getSettingValue, waitForSpecContinue, waitForPlanContinue } from './state';
+import { activeControllers, sendLog, sendPhaseUpdate, checkAborted, getSettingValue, waitForSpecContinue, waitForPlanContinue, resolveWorkDir } from './state';
 import { execFileAsync } from './claude-cli';
 import { readAgentMd, runRepoAnalysis } from './repo-analysis';
 import { runAgentPhase, resolveAgentForPhase, checkSpeckitForAgent } from './agents';
@@ -44,7 +44,7 @@ export async function orchestrateSddWorkflow(
     taskTitle = task.title;
 
     const projectPath = task.project_path;  // original repo (always)
-    let workDir = task.worktree_path || projectPath; // effective working directory
+    let workDir = resolveWorkDir(task, db); // effective working directory
     const projectName = task.project_name;
     let projectDescription = readAgentMd(workDir) || task.project_description || '';
     const model = task.model;

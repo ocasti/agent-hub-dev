@@ -2,7 +2,7 @@ import { spawn } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import type { TaskRow, Queries, GetWindow } from './types';
-import { activeControllers, sendLog, sendPhaseUpdate, checkAborted, getSettingValue } from './state';
+import { activeControllers, sendLog, sendPhaseUpdate, checkAborted, getSettingValue, resolveWorkDir } from './state';
 import { runAgentPhase } from './agents';
 
 // ── Native Test Runner ──────────────────────────────────────────────────────────
@@ -112,7 +112,7 @@ export async function runTestFixLoop(
     if (!task) throw new Error(`Task ${taskId} not found`);
 
     const projectPath = task.project_path;
-    const workDir = task.worktree_path || projectPath;
+    const workDir = resolveWorkDir(task, db);
     const projectName = task.project_name;
     const model = task.model;
     const proj = q.getProject.get(task.project_id) as { test_command?: string } | undefined;

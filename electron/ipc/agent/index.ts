@@ -6,7 +6,7 @@ import { join } from 'path';
 import { createQueries } from '../../db/queries';
 import { readSettingSources } from '../skills';
 import type { TaskRow, KnowledgeRow } from './types';
-import { activeControllers, specResolvers, planResolvers, pushResolvers, fixTestsResolvers, sendLog, sendPhaseUpdate, getSettingValue } from './state';
+import { activeControllers, specResolvers, planResolvers, pushResolvers, fixTestsResolvers, sendLog, sendPhaseUpdate, getSettingValue, resolveWorkDir } from './state';
 import { getEffectiveMaxConcurrent, getMaxParallelPerProject } from '../license';
 import { cleanEnv, execFileAsync } from './claude-cli';
 import { runRepoAnalysis } from './repo-analysis';
@@ -211,7 +211,7 @@ export function registerAgentHandlers(
       // No active resolver — process was killed/restarted. Handle directly.
       const task = q.getTask.get(taskId) as TaskRow | undefined;
       if (!task || task.status !== 'push_review') return;
-      const workDir = task.worktree_path || task.project_path;
+      const workDir = resolveWorkDir(task, db);
       const projectName = task.project_name;
 
       if (action === 'reject') {
@@ -261,7 +261,7 @@ export function registerAgentHandlers(
   ipcMain.handle('agent:syncRemote', async (_event, taskId: string) => {
     const task = q.getTask.get(taskId) as TaskRow | undefined;
     if (!task || !task.branch_name) return { success: false, message: 'Task or branch not found' };
-    const workDir = task.worktree_path || task.project_path;
+    const workDir = resolveWorkDir(task, db);
     const extraEnv = resolveEnvVars(task.project_id, db);
     return syncRemoteBranch(workDir, task.branch_name, taskId, task.project_name, q, getWindow, extraEnv);
   });
@@ -270,7 +270,7 @@ export function registerAgentHandlers(
   ipcMain.handle('agent:syncParent', async (_event, taskId: string) => {
     const task = q.getTask.get(taskId) as TaskRow | undefined;
     if (!task || !task.branch_name) return { success: false, message: 'Task or branch not found', hasConflicts: false, conflictFiles: [] };
-    const workDir = task.worktree_path || task.project_path;
+    const workDir = resolveWorkDir(task, db);
     const extraEnv = resolveEnvVars(task.project_id, db);
 
     const result = await syncParentBranch(workDir, task.branch_name, taskId, task.project_name, q, getWindow, extraEnv);

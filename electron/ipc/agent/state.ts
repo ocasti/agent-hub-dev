@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from 'fs';
+import { join } from 'path';
+import type Database from 'better-sqlite3';
 import type { Queries, GetWindow } from './types';
 
 // ── Resolver Maps ──────────────────────────────────────────────────────────────
@@ -63,6 +66,48 @@ export function getSettingValue(q: Queries, key: string, defaultValue: number): 
     return isNaN(parsed) ? defaultValue : parsed;
   }
   return defaultValue;
+}
+
+/**
+ * Check if a worktree directory is a valid git worktree.
+ * A worktree has a `.git` file (not directory) pointing to the parent repo's
+ * `.git/worktrees/<name>` directory. Both must exist for the worktree to work.
+ */
+function isValidWorktree(worktreePath: string): boolean {
+  if (!existsSync(worktreePath)) return false;
+
+  const dotGit = join(worktreePath, '.git');
+  if (!existsSync(dotGit)) return false;
+
+  try {
+    const content = readFileSync(dotGit, 'utf-8').trim();
+    // Worktree .git file contains: "gitdir: /path/to/repo/.git/worktrees/<id>"
+    const match = content.match(/^gitdir:\s*(.+)$/);
+    if (!match) return false;
+    return existsSync(match[1]);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolve the working directory for a task.
+ * If the task has a worktree_path, verify it's a valid git worktree.
+ * If the worktree is broken or removed, clear the stale reference and fall back to projectPath.
+ */
+export function resolveWorkDir(
+  task: { worktree_path: string | null; project_path: string; id: string },
+  db: Database.Database
+): string {
+  if (task.worktree_path) {
+    if (isValidWorktree(task.worktree_path)) {
+      return task.worktree_path;
+    }
+    // Worktree broken or removed — clear stale reference
+    db.prepare('UPDATE tasks SET worktree_path = NULL WHERE id = ?').run(task.id);
+    task.worktree_path = null;
+  }
+  return task.project_path;
 }
 
 // ── Resolver Waiters ──────────────────────────────────────────────────────────

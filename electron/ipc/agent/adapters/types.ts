@@ -3,7 +3,7 @@
 // Abstraction layer for code hosting providers (GitHub, GitLab, Bitbucket).
 // Level 2 plugins implement the CodeHostingAdapter interface.
 
-import type { FetchedThread, FetchedPrFeedback, Queries, GetWindow } from '../types';
+import type { FetchedThread, FetchedPrFeedback, CICheckResult, Queries, GetWindow } from '../types';
 
 // ── Credentials ─────────────────────────────────────────────────────────────────
 
@@ -88,6 +88,11 @@ export interface MinimizeOptions {
   beforeReviewCycle: number;
 }
 
+export interface FetchCIStatusOptions {
+  projectPath: string;
+  prNumber: number;
+}
+
 // ── Adapter Interface ───────────────────────────────────────────────────────────
 
 /**
@@ -153,6 +158,15 @@ export interface CodeHostingAdapter {
     options: MinimizeOptions,
     env: CodeHostingEnvVars
   ): Promise<void>;
+
+  /**
+   * Fetch CI/pipeline check status for a PR.
+   * Returns overall status + failure logs if any checks failed.
+   */
+  fetchCIStatus(
+    options: FetchCIStatusOptions,
+    env: CodeHostingEnvVars
+  ): Promise<CICheckResult>;
 
   /**
    * Push the current branch to remote.

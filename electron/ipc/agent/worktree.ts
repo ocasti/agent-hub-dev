@@ -260,8 +260,19 @@ export function cleanOrphanWorktrees(db: Database.Database): void {
     try {
       const task = db.prepare('SELECT status, project_id FROM tasks WHERE id = ?').get(taskId) as { status: string; project_id: string } | undefined;
 
-      if (!task || !activeStatuses.has(task.status)) {
-        // Task doesn't exist or is completed/failed/queued — clean up
+      // Check if worktree's git reference is broken (gitdir target deleted)
+      const dotGit = path.join(worktreePath, '.git');
+      let worktreeBroken = false;
+      try {
+        const content = fs.readFileSync(dotGit, 'utf-8').trim();
+        const match = content.match(/^gitdir:\s*(.+)$/);
+        if (!match || !fs.existsSync(match[1])) worktreeBroken = true;
+      } catch {
+        worktreeBroken = true;
+      }
+
+      if (!task || !activeStatuses.has(task.status) || worktreeBroken) {
+        // Task doesn't exist, is completed/failed/queued, or worktree is broken — clean up
         const project = task
           ? db.prepare('SELECT path FROM projects WHERE id = ?').get(task.project_id) as { path: string } | undefined
           : undefined;

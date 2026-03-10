@@ -18,7 +18,8 @@ export type NotificationKey =
   | 'workflow_aborted'
   | 'regression_detected'
   | 'max_review_loops'
-  | 'tests_failing';
+  | 'tests_failing'
+  | 'ci_pending';
 
 export const ALL_NOTIFICATION_KEYS: NotificationKey[] = [
   'spec_needs_input',
@@ -35,6 +36,7 @@ export const ALL_NOTIFICATION_KEYS: NotificationKey[] = [
   'regression_detected',
   'max_review_loops',
   'tests_failing',
+  'ci_pending',
 ];
 
 // ── Defaults (all enabled) ──────────────────────────────────────────────────
