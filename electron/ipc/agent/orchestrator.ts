@@ -115,6 +115,62 @@ export async function orchestrateSddWorkflow(
     // NOTE: last_phase is preserved from previous run for resume safety.
     // Each phase updates last_phase before running; it resets to -1 only on full success (end of workflow).
 
+    // ── Early Worktree Creation ────────────────────────────────────────────
+    // When parallel execution is enabled, create the worktree BEFORE Phase 0 so that
+    // spec review (Phase 0) and planning (Phase 1) also run in an isolated directory.
+    // Without this, parallel tasks would write spec/plan files to the same project directory.
+    if (useWorktree && !task.worktree_path) {
+      // If worktree_path was set in DB but directory was removed (e.g. crash), clear it
+      // (this check also runs in Phase 2 for non-worktree → worktree transitions)
+      const effectiveBranch = (task.branch_name && task.branch_name !== 'unknown') ? task.branch_name : null;
+
+      sendLog(q, getWindow, taskId, projectName, '── Creating isolated worktree for parallel execution ──', 'info');
+      const wt = await createWorktree(
+        projectPath, taskId, task.title, effectiveBranch, q, getWindow, projectName, extraEnv
+      );
+      workDir = wt.worktreePath;
+      taskWorktreePath = wt.worktreePath;
+      task.branch_name = wt.branchName;
+      q.updateTaskWorktree.run(wt.worktreePath, taskId);
+
+      // Save branch name early so resume knows the branch
+      const freshForWT = q.getTask.get(taskId) as TaskRow | undefined;
+      if (freshForWT) {
+        q.updateTask.run(
+          freshForWT.title, freshForWT.description, freshForWT.acceptance_criteria, freshForWT.images,
+          freshForWT.model, freshForWT.status, freshForWT.pr_number, freshForWT.review_cycle,
+          freshForWT.spec_suggestions, freshForWT.plan_summary, wt.branchName, freshForWT.pm_work_item_id, freshForWT.pm_work_item_url, taskId
+        );
+      }
+
+      // Install dependencies in worktree (symlink node_modules when possible)
+      await setupWorktreeDepsWithSymlink(workDir, projectPath, taskId, projectName, q, getWindow);
+
+      // Re-read AGENT.md from worktree
+      projectDescription = readAgentMd(workDir) || task.project_description || '';
+
+      sendLog(q, getWindow, taskId, projectName, `Worktree ready: ${wt.worktreePath} (branch: ${wt.branchName})`, 'ok');
+    } else if (task.worktree_path && !existsSync(task.worktree_path)) {
+      // Worktree path was saved but directory is gone — recreate it
+      sendLog(q, getWindow, taskId, projectName, 'Worktree directory missing — recreating...', 'info');
+      q.updateTaskWorktree.run(null, taskId);
+      task.worktree_path = null as unknown as string;
+      workDir = projectPath;
+
+      if (useWorktree) {
+        const effectiveBranch = (task.branch_name && task.branch_name !== 'unknown') ? task.branch_name : null;
+        const wt = await createWorktree(
+          projectPath, taskId, task.title, effectiveBranch, q, getWindow, projectName, extraEnv
+        );
+        workDir = wt.worktreePath;
+        taskWorktreePath = wt.worktreePath;
+        task.branch_name = wt.branchName;
+        q.updateTaskWorktree.run(wt.worktreePath, taskId);
+        await setupWorktreeDepsWithSymlink(workDir, projectPath, taskId, projectName, q, getWindow);
+        projectDescription = readAgentMd(workDir) || task.project_description || '';
+      }
+    }
+
     // ── Ensure correct branch ──────────────────────────────────────────────
     // If task already has a branch (from a previous run), switch to it before any phase.
     // This guarantees we're always working on the task's branch, even when resuming at Phase 3+.
@@ -282,57 +338,15 @@ export async function orchestrateSddWorkflow(
     }
 
     // ── Git Preparation: ensure clean feature branch before implementing ──
-    if (startPhase <= 2) {
+    // Worktree mode: branch was already created during early worktree setup (before Phase 0).
+    // Classic mode: create feature branch now, before implementation begins.
+    if (startPhase <= 2 && !taskWorktreePath) {
       checkAborted(controller);
       sendLog(q, getWindow, taskId, projectName, '── Git: Preparing feature branch ──', 'info');
 
-      let branchName: string;
-
-      // If worktree_path is set in DB but the directory no longer exists (e.g. app crashed/restarted),
-      // clear it so we can recreate the worktree properly
-      if (task.worktree_path && !existsSync(task.worktree_path)) {
-        sendLog(q, getWindow, taskId, projectName, 'Worktree directory missing — will recreate it.', 'info');
-        q.updateTaskWorktree.run(null, taskId);
-        task.worktree_path = null as unknown as string;
-        workDir = projectPath;
-      }
-
-      // Sanitize branch_name — 'unknown' is a sentinel from a previous bug, treat as null
-      const effectiveBranch = (task.branch_name && task.branch_name !== 'unknown') ? task.branch_name : null;
-
-      if (useWorktree && !task.worktree_path) {
-        // Worktree mode: create isolated worktree with its own branch
-        const wt = await createWorktree(
-          projectPath, taskId, task.title, effectiveBranch, q, getWindow, projectName, extraEnv
-        );
-        workDir = wt.worktreePath;
-        branchName = wt.branchName;
-        taskWorktreePath = wt.worktreePath;
-        q.updateTaskWorktree.run(wt.worktreePath, taskId);
-
-        // Install dependencies in worktree (symlink node_modules when possible)
-        await setupWorktreeDepsWithSymlink(workDir, projectPath, taskId, projectName, q, getWindow);
-
-        // Re-read AGENT.md from worktree
-        projectDescription = readAgentMd(workDir) || task.project_description || '';
-
-        // V3: Detect conflicts with other active worktrees
-        try {
-          const conflicts = await detectWorktreeConflicts(projectPath, task.project_id, db, extraEnv);
-          if (conflicts.length > 0) {
-            const summary = conflicts.slice(0, 5).map(c => `${c.file} (${c.branches.length} branches)`).join(', ');
-            sendLog(q, getWindow, taskId, projectName, `Worktree conflict warning: ${conflicts.length} file(s) modified in multiple branches: ${summary}`, 'info');
-            sendNotification('regression_detected', 'Worktree conflict detected', `${task.title} — ${conflicts.length} file(s) overlap with other active branches. Review before merging.`);
-          }
-        } catch {
-          // Non-critical — continue workflow
-        }
-      } else {
-        // Classic mode: branch directly in project directory
-        branchName = await prepareGitBranch(
-          workDir, task.title, task.branch_name, taskId, projectName, q, getWindow, extraEnv
-        );
-      }
+      const branchName = await prepareGitBranch(
+        workDir, task.title, task.branch_name, taskId, projectName, q, getWindow, extraEnv
+      );
 
       // Save branch name to task so resume can use it
       const freshForBranch = q.getTask.get(taskId) as TaskRow | undefined;
@@ -342,6 +356,20 @@ export async function orchestrateSddWorkflow(
           freshForBranch.model, freshForBranch.status, freshForBranch.pr_number, freshForBranch.review_cycle,
           freshForBranch.spec_suggestions, freshForBranch.plan_summary, branchName, freshForBranch.pm_work_item_id, freshForBranch.pm_work_item_url, taskId
         );
+      }
+    }
+
+    // Worktree mode: detect conflicts with other active worktrees before implementing
+    if (startPhase <= 2 && taskWorktreePath) {
+      try {
+        const conflicts = await detectWorktreeConflicts(projectPath, task.project_id, db, extraEnv);
+        if (conflicts.length > 0) {
+          const summary = conflicts.slice(0, 5).map(c => `${c.file} (${c.branches.length} branches)`).join(', ');
+          sendLog(q, getWindow, taskId, projectName, `Worktree conflict warning: ${conflicts.length} file(s) modified in multiple branches: ${summary}`, 'info');
+          sendNotification('regression_detected', 'Worktree conflict detected', `${task.title} — ${conflicts.length} file(s) overlap with other active branches. Review before merging.`);
+        }
+      } catch {
+        // Non-critical — continue workflow
       }
     }
 
