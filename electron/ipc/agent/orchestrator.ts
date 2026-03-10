@@ -11,7 +11,8 @@ import { parsePhaseOutput, saveKnowledgeEntries } from './output-parser';
 import { buildPhasePrompt, buildFixPrompt } from './prompt-builder';
 import { prepareGitBranch, commitWipIfDirty } from './git-ops';
 import { createWorktree, setupWorktreeDepsWithSymlink, removeWorktree, mergeWorktreeBranch, detectWorktreeConflicts } from './worktree';
-import { fireHook, hasCodeHostingPlugin } from '../plugins/engine';
+import { fireHook, hasCodeHostingPlugin, executeOperation, getActivePluginsForProject } from '../plugins/engine';
+import { extractFieldByPath } from '../plugins/index';
 import type { HookContext } from '../plugins/types';
 import { canUseModel, getEffectiveMaxReviewLoops, getMaxParallelPerProject } from '../license';
 import { sendNotification } from '../notifications';
@@ -380,8 +381,46 @@ export async function orchestrateSddWorkflow(
     if (startPhase <= 2) {
       checkAborted(controller);
       q.updateTaskLastPhase.run(2, taskId);
-      await runSimplePhase(2, 'implementing', taskId, task, workDir, projectName, projectDescription, model, knowledge, criteria, q, getWindow, controller, useSpeckit, extraEnv, db);
+
+      const implSubtasks = readSubtasksFromPluginContext(db, taskId);
+      if (implSubtasks && implSubtasks.length > 0) {
+        const pending = implSubtasks.filter((s) => !s.completed).length;
+        sendLog(q, getWindow, taskId, projectName, `Implementation tasks: ${implSubtasks.length} total, ${pending} pending`, 'info');
+      }
+
+      await runSimplePhase(2, 'implementing', taskId, task, workDir, projectName, projectDescription, model, knowledge, criteria, q, getWindow, controller, useSpeckit, extraEnv, db, implSubtasks);
+
+      // Mark all subtasks as completed in plugin_context after Phase 2 succeeds.
+      // This keeps local state in sync — on:implement_complete marks them in PM
+      // but doesn't update plugin_context.
+      markAllSubtasksCompleted(db, taskId);
+
       await fireHook('on:implement_complete', { ...hookCtx, phase: 2, phaseLabel: 'implementing' }, db);
+    }
+
+    // ── Subtask Gate: verify all subtasks are done before Quality Gate ────
+    // If resuming from Phase 3 and subtasks exist but are incomplete
+    // (e.g. Phase 2 finished but on:implement_complete didn't update local state),
+    // refresh from PM first, then re-run Phase 2 only if truly pending.
+    if (startPhase === 3) {
+      // First, try to refresh subtask completion status from PM
+      await refreshSubtaskStatusFromPm(db, taskId, hookCtx, sendLog, q, getWindow, projectName);
+
+      const pendingCheck = readSubtasksFromPluginContext(db, taskId);
+      if (pendingCheck && pendingCheck.length > 0) {
+        const pending = pendingCheck.filter((s) => !s.completed);
+        if (pending.length > 0) {
+          sendLog(q, getWindow, taskId, projectName,
+            `Subtask gate: ${pending.length}/${pendingCheck.length} tasks still pending. Re-running Phase 2 before Quality Gate.`, 'info');
+          q.updateTaskLastPhase.run(2, taskId);
+          await runSimplePhase(2, 'implementing', taskId, task, workDir, projectName, projectDescription, model, knowledge, criteria, q, getWindow, controller, useSpeckit, extraEnv, db, pendingCheck);
+          markAllSubtasksCompleted(db, taskId);
+          await fireHook('on:implement_complete', { ...hookCtx, phase: 2, phaseLabel: 'implementing' }, db);
+        } else {
+          sendLog(q, getWindow, taskId, projectName,
+            `Subtask gate: all ${pendingCheck.length} tasks completed. Proceeding to Quality Gate.`, 'ok');
+        }
+      }
     }
 
     // ── Phase 3: Quality Gate (loop) ───────────────────────────────────────
@@ -602,14 +641,15 @@ export async function runSimplePhase(
   controller: AbortController,
   useSpeckit?: boolean,
   extraEnv?: Record<string, string | undefined>,
-  db?: Database.Database
+  db?: Database.Database,
+  subtasks?: { description: string; completed: boolean }[]
 ) {
   q.updateTaskStatus.run(statusLabel, taskId);
   sendPhaseUpdate(getWindow, { taskId, phase: phaseNum, phaseLabel: statusLabel, status: 'started' });
   sendLog(q, getWindow, taskId, projectName, `── Phase ${phaseNum}: ${statusLabel.charAt(0).toUpperCase() + statusLabel.slice(1)} ──`, 'info');
 
   const phaseTimeouts: Record<number, number> = { 1: 600000, 2: 1800000 };
-  const prompt = buildPhasePrompt(phaseNum, task, projectDescription, knowledge, criteria, undefined, useSpeckit);
+  const prompt = buildPhasePrompt(phaseNum, task, projectDescription, knowledge, criteria, undefined, useSpeckit, undefined, subtasks);
   const timeoutMs = phaseTimeouts[phaseNum] || 600000;
 
   const { exitCode } = await runAgentPhase(db!, task.project_id, phaseNum, {
@@ -623,4 +663,159 @@ export async function runSimplePhase(
   }
 
   sendPhaseUpdate(getWindow, { taskId, phase: phaseNum, phaseLabel: statusLabel, status: 'completed' });
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────────
+
+/**
+ * Read subtasks from plugin_context across all active plugins.
+ * Returns undefined if no subtasks are stored.
+ */
+function readSubtasksFromPluginContext(
+  db: Database.Database,
+  taskId: string
+): { description: string; completed: boolean }[] | undefined {
+  try {
+    const row = db.prepare('SELECT plugin_context FROM tasks WHERE id = ?')
+      .get(taskId) as { plugin_context: string } | undefined;
+    if (!row) return undefined;
+
+    const pc = JSON.parse(row.plugin_context || '{}');
+    const all: { description: string; completed: boolean }[] = [];
+    for (const pluginData of Object.values(pc)) {
+      const pd = pluginData as Record<string, unknown>;
+      if (Array.isArray(pd.subtasks)) {
+        for (const st of pd.subtasks as { description: string; completed: boolean }[]) {
+          all.push({ description: st.description, completed: !!st.completed });
+        }
+      }
+    }
+    return all.length > 0 ? all : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Mark all subtasks as completed in plugin_context.
+ * Called after Phase 2 succeeds — the agent finished all work,
+ * so subtasks are considered done even if PM wasn't updated yet.
+ */
+function markAllSubtasksCompleted(db: Database.Database, taskId: string): void {
+  try {
+    const row = db.prepare('SELECT plugin_context FROM tasks WHERE id = ?')
+      .get(taskId) as { plugin_context: string } | undefined;
+    if (!row) return;
+
+    const pc = JSON.parse(row.plugin_context || '{}');
+    let changed = false;
+    for (const pluginData of Object.values(pc)) {
+      const pd = pluginData as Record<string, unknown>;
+      if (Array.isArray(pd.subtasks)) {
+        for (const st of pd.subtasks as { completed: boolean }[]) {
+          if (!st.completed) {
+            st.completed = true;
+            changed = true;
+          }
+        }
+      }
+    }
+    if (changed) {
+      db.prepare('UPDATE tasks SET plugin_context = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+        .run(JSON.stringify(pc), taskId);
+    }
+  } catch { /* ignore */ }
+}
+
+/**
+ * Refresh subtask completion status from PM before the subtask gate.
+ * This handles the case where subtasks were completed in PM (via on:implement_complete hook
+ * or manually) but plugin_context wasn't updated locally.
+ */
+async function refreshSubtaskStatusFromPm(
+  db: Database.Database,
+  taskId: string,
+  hookCtx: HookContext,
+  _sendLog: typeof sendLog,
+  q: Queries,
+  getWindow: GetWindow,
+  projectName: string
+): Promise<void> {
+  try {
+    const task = db.prepare('SELECT pm_work_item_id, project_id FROM tasks WHERE id = ?')
+      .get(taskId) as { pm_work_item_id: string | null; project_id: string } | undefined;
+    if (!task?.pm_work_item_id) return;
+
+    // Use the plugin's fetch operation to get current status from PM
+    const plugins = getActivePluginsForProject(task.project_id, db);
+    for (const plugin of plugins) {
+      const raw = plugin.workflow as unknown as Record<string, unknown>;
+      const ops = (raw?.operations as Record<string, { tool: string; server: string; args: Record<string, string>; fieldMap?: Record<string, string> }>) || {};
+      const fetchOp = ops['fetch'];
+      if (!fetchOp?.fieldMap) continue;
+
+      try {
+        const vars: Record<string, string> = { pmWorkItemId: task.pm_work_item_id, ...plugin.config };
+        const result = await executeOperation(fetchOp, vars);
+        if (!result || typeof result !== 'object') continue;
+
+        const data = result as Record<string, unknown>;
+        const fm = fetchOp.fieldMap;
+
+        // Extract completion status using fieldMap paths
+        const stCompletedField = fm['subtasksCompleted'];
+        const crCompletedField = fm['criteriaCompleted'];
+
+        if (!stCompletedField && !crCompletedField) continue;
+
+        const row = db.prepare('SELECT plugin_context FROM tasks WHERE id = ?')
+          .get(taskId) as { plugin_context: string } | undefined;
+        if (!row) continue;
+
+        const pc = JSON.parse(row.plugin_context || '{}');
+        if (!pc[plugin.id]) continue;
+
+        let changed = false;
+
+        // Update subtask completion from PM
+        if (stCompletedField && Array.isArray(pc[plugin.id].subtasks)) {
+          const completedValues = extractFieldByPath(data, stCompletedField);
+          if (Array.isArray(completedValues) && completedValues.length > 0) {
+            const subtasks = pc[plugin.id].subtasks as { id: string; completed: boolean }[];
+            for (let i = 0; i < subtasks.length && i < completedValues.length; i++) {
+              const remoteComplete = !!completedValues[i];
+              if (subtasks[i].completed !== remoteComplete) {
+                subtasks[i].completed = remoteComplete;
+                changed = true;
+              }
+            }
+          }
+        }
+
+        // Update criteria completion from PM
+        if (crCompletedField && Array.isArray(pc[plugin.id].criteria)) {
+          const completedValues = extractFieldByPath(data, crCompletedField);
+          if (Array.isArray(completedValues) && completedValues.length > 0) {
+            const criteria = pc[plugin.id].criteria as { id: string; completed: boolean }[];
+            for (let i = 0; i < criteria.length && i < completedValues.length; i++) {
+              const remoteComplete = !!completedValues[i];
+              if (criteria[i].completed !== remoteComplete) {
+                criteria[i].completed = remoteComplete;
+                changed = true;
+              }
+            }
+          }
+        }
+
+        if (changed) {
+          db.prepare('UPDATE tasks SET plugin_context = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+            .run(JSON.stringify(pc), taskId);
+          _sendLog(q, getWindow, taskId, projectName, 'Subtask gate: refreshed completion status from PM', 'info');
+        }
+      } catch (err) {
+        // Non-critical — proceed with local status
+        console.error(`[orchestrator] PM refresh for subtask gate failed:`, (err as Error).message);
+      }
+    }
+  } catch { /* ignore */ }
 }

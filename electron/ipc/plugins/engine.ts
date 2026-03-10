@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { HookContext, InstalledPlugin, PluginHook, PluginOperation, ResolvedPhase } from './types';
+import type { HookContext, InstalledPlugin, PluginAction, PluginHook, PluginOperation, ResolvedPhase } from './types';
 import { loadAllPlugins } from './loader';
 import { callMcpHttpTool, getMcpServerConfig } from './mcp-client';
 
@@ -110,10 +110,32 @@ async function executeHookOperation(
       return;
     }
 
+    // Filter out items that already have a remote ID (already exist in PM).
+    // This prevents on:plan_approved from creating duplicate dev_tasks
+    // when subtasks were already fetched from PM during enrichment.
+    const filteredItems = items.filter((item) => {
+      if (typeof item === 'object' && item !== null) {
+        const obj = item as Record<string, unknown>;
+        const id = String(obj.id || '');
+        // Skip items with real PM IDs (non-empty, not local-generated)
+        if (id && !id.startsWith('local-')) return false;
+      }
+      return true;
+    });
+
+    if (filteredItems.length === 0) {
+      console.log(`[plugins] Hook ${event}: iterate "${hook.iterate}" — all ${items.length} item(s) already have remote IDs, skipping`);
+      return;
+    }
+
+    if (filteredItems.length < items.length) {
+      console.log(`[plugins] Hook ${event}: iterate "${hook.iterate}" — skipping ${items.length - filteredItems.length} item(s) with existing remote IDs`);
+    }
+
     const collectedIds: string[] = [];
     const sourceDescs: string[] = [];
 
-    for (const item of items) {
+    for (const item of filteredItems) {
       const iterVars = { ...vars };
       if (typeof item === 'object' && item !== null) {
         const obj = item as Record<string, unknown>;
@@ -146,7 +168,7 @@ async function executeHookOperation(
       storeCollectedInPluginContext(db, context.taskId, plugin.id, hook.store.key, sourceDescs, collectedIds);
     }
 
-    console.log(`[plugins] Hook ${event}: iterated ${items.length} item(s)`);
+    console.log(`[plugins] Hook ${event}: iterated ${filteredItems.length} item(s)`);
     return;
   }
 
@@ -368,23 +390,29 @@ function getNormalizedHooks(plugin: InstalledPlugin): PluginHook[] {
   }
 
   // Object format (PM plugin) — convert to array
+  // Supports both single hook and array of hooks per event
   const hooks: PluginHook[] = [];
-  for (const [event, hookDef] of Object.entries(rawHooks as Record<string, RawManifest>)) {
+  const pushHook = (event: string, hookDef: RawManifest) => {
     hooks.push({
       event,
       operation: (hookDef.operation as string) || '',
       priority: (hookDef.priority as number) || 100,
       blocking: (hookDef.blocking as boolean) || false,
-      // Inline operation fields (PM style)
       tool: hookDef.tool as string | undefined,
       server: hookDef.server as string | undefined,
       args: hookDef.args as Record<string, string> | undefined,
-      // Special fields
       action: hookDef.action as string | undefined,
       statusMap: hookDef.statusMap as string | undefined,
       iterate: hookDef.iterate as string | undefined,
       store: hookDef.store as { key: string; field: string } | undefined,
     } as PluginHook);
+  };
+  for (const [event, hookDef] of Object.entries(rawHooks as Record<string, RawManifest | RawManifest[]>)) {
+    if (Array.isArray(hookDef)) {
+      for (const h of hookDef) pushHook(event, h as RawManifest);
+    } else {
+      pushHook(event, hookDef as RawManifest);
+    }
   }
   return hooks;
 }
@@ -421,6 +449,105 @@ function getNormalizedPhases(plugin: InstalledPlugin): { id: string; label: stri
   const phases = nested.phases;
   if (!phases || !Array.isArray(phases)) return [];
   return phases as { id: string; label: string; capability: string; icon?: string }[];
+}
+
+// ── Injected Actions ─────────────────────────────────────────────────────────────
+
+/** Get actions from nested workflow */
+function getNormalizedActions(plugin: InstalledPlugin): PluginAction[] {
+  const nested = getNestedWorkflow(plugin);
+  const rawActions = nested.actions;
+  if (!rawActions) return [];
+
+  // Array format
+  if (Array.isArray(rawActions)) {
+    return rawActions as PluginAction[];
+  }
+
+  // Object format: { "action_id": { label, icon, ... } }
+  const actions: PluginAction[] = [];
+  for (const [id, def] of Object.entries(rawActions as Record<string, RawManifest>)) {
+    actions.push({
+      id,
+      label: String(def.label || id),
+      icon: def.icon as string | undefined,
+      operation: def.operation as string | undefined,
+      context: (def.context as 'task' | 'project') || 'task',
+      injectAt: def.injectAt as string | undefined,
+      promptTemplate: def.promptTemplate as string | undefined,
+      mode: (def.mode as 'copy' | 'modal') || undefined,
+    });
+  }
+  return actions;
+}
+
+export interface InjectedAction {
+  pluginId: string;
+  actionId: string;
+  label: string;
+  icon?: string;
+  mode: 'copy' | 'modal';
+  prompt?: string;
+}
+
+/**
+ * Get injected actions for a task at a given status.
+ * Resolves promptTemplate with task data (criteria, title, description).
+ */
+export function getInjectedActions(
+  projectId: string,
+  taskStatus: string,
+  taskData: { title: string; description: string; criteria: string[]; branchName?: string; projectPath?: string },
+  db: Database.Database
+): InjectedAction[] {
+  const plugins = getActivePluginsForProject(projectId, db);
+  const result: InjectedAction[] = [];
+
+  for (const plugin of plugins) {
+    const actions = getNormalizedActions(plugin);
+    for (const action of actions) {
+      if (!action.injectAt) continue;
+
+      // Match by status (e.g. "status:pr_feedback")
+      const statusMatch = action.injectAt.match(/^status:(.+)$/);
+      if (statusMatch && statusMatch[1] === taskStatus) {
+        const prompt = action.promptTemplate
+          ? resolvePromptTemplate(action.promptTemplate, taskData)
+          : undefined;
+
+        result.push({
+          pluginId: plugin.id,
+          actionId: action.id,
+          label: action.label,
+          icon: action.icon,
+          mode: action.mode || 'copy',
+          prompt,
+        });
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Resolve a prompt template with task data.
+ * Supports: {taskTitle}, {taskDescription}, {criteria}, {branchName}, {projectPath}
+ */
+function resolvePromptTemplate(
+  template: string,
+  data: { title: string; description: string; criteria: string[]; branchName?: string; projectPath?: string }
+): string {
+  const criteriaText = data.criteria.length > 0
+    ? data.criteria.map((c, i) => `${i + 1}. ${c}`).join('\n')
+    : 'No specific acceptance criteria defined.';
+
+  return template
+    .replace(/\{taskTitle\}/g, data.title)
+    .replace(/\{taskDescription\}/g, data.description)
+    .replace(/\{criteria\}/g, criteriaText)
+    .replace(/\{branchName\}/g, data.branchName || 'unknown')
+    .replace(/\{projectPath\}/g, data.projectPath || 'unknown');
 }
 
 // ── Hook Resolution ─────────────────────────────────────────────────────────────

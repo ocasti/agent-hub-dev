@@ -114,8 +114,11 @@ export interface PluginAction {
   id: string;
   label: string;
   icon?: string;
-  operation: string;                // reference to operations key
+  operation?: string;               // reference to operations key (for MCP actions)
   context: 'task' | 'project';     // where the button appears
+  injectAt?: string;                // phase-based injection: "phase:5", "status:pr_feedback"
+  promptTemplate?: string;          // dynamic prompt template with {criteria}, {taskTitle}, etc.
+  mode?: 'copy' | 'modal';         // how to deliver the prompt (default: 'copy')
 }
 
 export interface PluginEnrichment {

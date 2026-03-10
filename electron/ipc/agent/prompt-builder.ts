@@ -30,11 +30,24 @@ export function buildPhasePrompt(
   criteria: string[],
   reviewLoop?: number,
   useSpeckit?: boolean,
-  enrichment?: Record<string, unknown>
+  enrichment?: Record<string, unknown>,
+  subtasks?: { description: string; completed: boolean }[]
 ): string {
-  const knowledgeSection = buildKnowledgeSection(knowledge);
   const criteriaText = buildCriteriaSection(criteria);
-  const projectCtx = projectDescription ? `\n## Project Context\n${projectDescription}\n` : '';
+
+  // Optimization: skip projectDescription for phases 1+ — the agent reads AGENT.md
+  // from disk automatically. Only Phase 0 (spec review) needs it inline since the
+  // agent hasn't explored the project yet.
+  const projectCtx = (phase <= 0 && projectDescription)
+    ? `\n## Project Context\n${projectDescription}\n`
+    : '';
+
+  // Optimization: limit knowledge entries to top 10 by severity to reduce prompt size.
+  const severityOrder: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+  const sortedKnowledge = [...knowledge]
+    .sort((a, b) => (severityOrder[a.severity] ?? 3) - (severityOrder[b.severity] ?? 3))
+    .slice(0, 10);
+  const knowledgeSection = buildKnowledgeSection(sortedKnowledge);
 
   // Inject plugin enrichment data if available
   let enrichmentSection = '';
@@ -121,7 +134,22 @@ ${!useSpeckit ? `
 IMPORTANT: You MUST actually execute commands and write plan files — do NOT just describe what to do.
 Do NOT write implementation code yet — only plan.`;
 
-    case 2: // Tasks + Implement (the critical phase)
+    case 2: { // Tasks + Implement (the critical phase)
+      // Build subtasks section — only include PENDING tasks to save tokens.
+      // Completed tasks don't need to be in the prompt.
+      let subtasksSection = '';
+      if (subtasks && subtasks.length > 0) {
+        const pending = subtasks.filter((s) => !s.completed);
+        const doneCount = subtasks.length - pending.length;
+        if (pending.length > 0) {
+          const lines = pending.map((s) => `- [ ] ${s.description}`);
+          subtasksSection = `\n## Implementation Tasks (${doneCount}/${subtasks.length} completed — ${pending.length} remaining)
+${lines.join('\n')}
+
+CRITICAL: You MUST complete ALL ${pending.length} pending tasks above. Do NOT finish until every task is done. Work through them one by one in order.\n`;
+        }
+      }
+
       return `You are an SDD agent. You MUST use your tools to write code, create files, and run commands.
 ${projectCtx}
 ## Task: ${task.title}
@@ -131,7 +159,7 @@ ${task.description}
 
 ## Acceptance Criteria:
 ${criteriaText}
-${knowledgeSection}
+${subtasksSection}${knowledgeSection}
 
 ## Instructions
 ${useSpeckit ? `1. Run the slash command /speckit.tasks to generate the task breakdown from the plan.
@@ -150,22 +178,32 @@ b. Run tests using your Bash tool — verify they fail (Red)
 c. Write minimal code to make tests pass (Green) — use your Edit tool to create/modify source files
 d. Refactor while keeping tests green
 e. Repeat for each component
+${subtasks && subtasks.length > 0 ? `
+f. For EACH implementation task above, implement it fully before moving to the next one.
+   Do NOT skip any task. Every pending task must be completed.` : ''}
 
 4. Ensure ALL tests pass before finishing — run the test suite with your Bash tool.
 5. Follow the project's existing coding standards and patterns.
 
 IMPORTANT: You MUST write actual code files using your Edit tool and run tests using your Bash tool.
-Do NOT just describe what to do — actually do it. Every acceptance criterion must be covered by a test.`;
+Do NOT just describe what to do — actually do it. Every acceptance criterion must be covered by a test.${subtasks && subtasks.length > 0 ? '\nDo NOT finish until ALL implementation tasks listed above are complete.' : ''}`;
+    }
 
-    case 3: // Quality Gate
+    case 3: { // Quality Gate
+      // Optimization: truncate spec for review — the agent reviews changed files,
+      // not the full spec. Keep first 500 chars as context summary.
+      const specSummary = task.description.length > 500
+        ? task.description.substring(0, 500) + '... [truncated — read full spec from project files if needed]'
+        : task.description;
+
       return `You are an SDD agent performing a quality gate review. You MUST use your tools to verify code quality.
-${projectCtx}
+
 ## Phase 3 — Quality Gate (IA Review)${reviewLoop ? ` — Review Loop ${reviewLoop + 1}` : ''}
 
 ### Task: ${task.title}
 
 ### Specification:
-${task.description}
+${specSummary}
 
 ### Acceptance Criteria:
 ${criteriaText}
@@ -220,15 +258,12 @@ note: Implemented via UserService.validate() with input sanitization
 - \`note\`: brief explanation of how it was met or why it was not
 
 You MUST report a [CRITERION_STATUS] block for EVERY acceptance criterion.` : ''}`;
+    }
 
-    case 4: // Ship
+    case 4: // Ship — no spec/knowledge needed, agent reads diff for PR description
       return `You are an SDD agent shipping code. You MUST use your Bash tool to execute git commands.
-${projectCtx}
-### Task: ${task.title}
 
-### Specification:
-${task.description}
-${knowledgeSection}
+### Task: ${task.title}
 
 ## Instructions
 You are already on the feature branch \`${task.branch_name || 'feature/<NNNN-name>'}\`. Ship the implementation:
@@ -281,25 +316,22 @@ After creating the PR, include these markers:
 
 export function buildFixPrompt(
   task: TaskRow,
-  projectDescription: string,
-  knowledge: KnowledgeRow[],
+  _projectDescription: string,
+  _knowledge: KnowledgeRow[],
   criteria: string[],
   issuesText: string
 ): string {
-  const knowledgeSection = buildKnowledgeSection(knowledge);
+  // Optimization: fix prompts only need the issues + criteria for context.
+  // The agent already has the codebase on disk and can read files as needed.
+  // Skipping projectDescription and knowledge saves significant tokens per fix loop.
   const criteriaText = buildCriteriaSection(criteria);
-  const projectCtx = projectDescription ? `\n## Project Context\n${projectDescription}\n` : '';
 
   return `You are an SDD agent fixing quality gate issues. You MUST use your tools to modify code and run tests.
-${projectCtx}
-### Task: ${task.title}
 
-### Specification:
-${task.description}
+### Task: ${task.title}
 
 ### Acceptance Criteria:
 ${criteriaText}
-${knowledgeSection}
 
 ## Issues Found in Review
 ${issuesText}

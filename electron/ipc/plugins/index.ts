@@ -5,7 +5,7 @@ import { app } from 'electron';
 import type Database from 'better-sqlite3';
 import { loadAllPlugins, getRegistryCatalog } from './loader';
 import { installPlugin, uninstallPlugin, updatePluginConfig, downloadAndInstallPlugin, installBundledPlugin, checkPluginCompatibility, previewLocalPlugin, installPluginFromDisk } from './installer';
-import { checkCapabilityConflicts, executeOperation } from './engine';
+import { checkCapabilityConflicts, executeOperation, getInjectedActions } from './engine';
 import { fetchConfigOptions, getMcpServerConfig, callMcpHttpTool, extractOptionsFromResult } from './mcp-client';
 import type { InstalledPlugin, CatalogPlugin, TaskField } from './types';
 import { canInstallCommunityPlugin } from '../license';
@@ -344,9 +344,29 @@ export function registerPluginHandlers(ipcMain: IpcMain, db: Database.Database) 
     const action = plugin.workflow.actions.find((a) => a.id === actionId);
     if (!action) throw new Error(`Action "${actionId}" not found in plugin "${pluginId}"`);
 
+    if (!action.operation) throw new Error(`Action "${actionId}" has no operation`);
     const operation = plugin.workflow.operations?.[action.operation];
     if (!operation) throw new Error(`Operation "${action.operation}" not found`);
 
     return executeOperation(operation, { ...plugin.config, ...context });
+  });
+
+  // Get injected actions for a task at its current status
+  ipcMain.handle('plugins:getInjectedActions', (_event, taskId: string) => {
+    const task = db.prepare('SELECT project_id, status, title, description, acceptance_criteria, branch_name, worktree_path FROM tasks WHERE id = ?')
+      .get(taskId) as { project_id: string; status: string; title: string; description: string; acceptance_criteria: string; branch_name: string | null; worktree_path: string | null } | undefined;
+    if (!task) return [];
+
+    const project = db.prepare('SELECT path FROM projects WHERE id = ?')
+      .get(task.project_id) as { path: string } | undefined;
+
+    const criteria = JSON.parse(task.acceptance_criteria || '[]') as string[];
+    return getInjectedActions(task.project_id, task.status, {
+      title: task.title,
+      description: task.description,
+      criteria,
+      branchName: task.branch_name || undefined,
+      projectPath: task.worktree_path || project?.path || undefined,
+    }, db);
   });
 }
