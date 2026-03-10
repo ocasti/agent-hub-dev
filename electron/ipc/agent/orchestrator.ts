@@ -238,9 +238,10 @@ export async function orchestrateSddWorkflow(
         const userResponse = await waitForSpecContinue(taskId, controller);
 
         // Check per-project limit before resuming execution
+        const specMaxParallel = getMaxParallelPerProject(db);
         const specProjectRunning = (q.getRunningTaskCountByProject.get(task.project_id, taskId) as { count: number }).count;
-        if (specProjectRunning > 0) {
-          sendLog(q, getWindow, taskId, projectName, `Proyecto "${projectName}" tiene otra tarea ejecutandose. Spec procesada pero la tarea esperara en cola.`, 'info');
+        if (specProjectRunning >= specMaxParallel) {
+          sendLog(q, getWindow, taskId, projectName, `Project "${projectName}" has reached its parallel limit (${specMaxParallel}). Spec processed but task will wait in queue.`, 'info');
           if (userResponse.action === 'edit' && userResponse.editedSpec) {
             q.updateTask.run(
               task.title, userResponse.editedSpec, task.acceptance_criteria, task.images,
@@ -322,9 +323,10 @@ export async function orchestrateSddWorkflow(
       }
 
       // Check per-project limit before resuming execution
+      const maxParallel = getMaxParallelPerProject(db);
       const projectRunning = (q.getRunningTaskCountByProject.get(task.project_id, taskId) as { count: number }).count;
-      if (projectRunning > 0) {
-        sendLog(q, getWindow, taskId, projectName, `Proyecto "${projectName}" tiene otra tarea ejecutandose. Plan aprobado pero la tarea esperara en cola.`, 'info');
+      if (projectRunning >= maxParallel) {
+        sendLog(q, getWindow, taskId, projectName, `Project "${projectName}" has reached its parallel limit (${maxParallel}). Plan approved but task will wait in queue.`, 'info');
         q.updateTaskStatus.run('queued', taskId);
         q.updateTaskLastPhase.run(2, taskId); // Resume from Phase 2 when started again
         sendPhaseUpdate(getWindow, { taskId, phase: 1, phaseLabel: 'queued', status: 'paused' });
