@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.1.0] — 2026-03-10 — Branch Sync & Plugin Enrichment
+
+### Added
+- **Sync Remote button** (PR Feedback phase): pulls changes from the remote branch when commits were pushed outside the app
+- **Sync Parent button** (PR Feedback phase): merges parent branch (main/master/develop) into the feature branch; if merge conflicts arise, the AI agent resolves them automatically
+- **Plugin hook enrichment**: PM plugins can now inject requirement data into Phase 0 (spec review) prompts via `on:before_spec` enrichment
+- **Real MCP dispatch for hooks**: plugin hook operations now execute via actual MCP tool calls with template variable resolution
+- **Plugin context in orchestrator**: plugin-injected subtasks and criteria are passed through the full workflow pipeline
+
+---
+
 ## [2.0.0] — 2026-03-09 — Multi-Agent Adapter System
 
 ### Added
