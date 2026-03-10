@@ -25,6 +25,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   updateTask: (id: string, updates: unknown) => ipcRenderer.invoke('tasks:update', id, updates),
   deleteTask: (id: string) => ipcRenderer.invoke('tasks:delete', id),
 
+  // Task subtasks (PM plugin context)
+  completeSubtask: (taskId: string, pluginId: string, subtaskId: string, completed: boolean) =>
+    ipcRenderer.invoke('tasks:completeSubtask', taskId, pluginId, subtaskId, completed),
+  refreshSubtasks: (taskId: string) => ipcRenderer.invoke('tasks:refreshSubtasks', taskId),
+  completeCriterion: (taskId: string, pluginId: string, criterionId: string, completed: boolean) =>
+    ipcRenderer.invoke('tasks:completeCriterion', taskId, pluginId, criterionId, completed),
+
   // Agent
   runAgent: (taskId: string, phase?: string) => ipcRenderer.invoke('agent:run', taskId, phase),
   stopAgent: (taskId: string) => ipcRenderer.invoke('agent:stop', taskId),

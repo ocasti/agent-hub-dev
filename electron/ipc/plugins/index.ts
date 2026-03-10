@@ -12,7 +12,7 @@ import { canInstallCommunityPlugin } from '../license';
 
 // ── JSONPath-like field extraction ──────────────────────────────────────────────
 
-function extractFieldByPath(obj: unknown, path: string): unknown {
+export function extractFieldByPath(obj: unknown, path: string): unknown {
   if (!obj || typeof obj !== 'object') return undefined;
   // Remove leading "$."
   const cleanPath = path.replace(/^\$\./, '');
@@ -319,6 +319,9 @@ export function registerPluginHandlers(ipcMain: IpcMain, db: Database.Database) 
     }
 
     const result = await callMcpHttpTool(config, operation.tool, resolvedArgs);
+
+    // Return raw result if 4th arg is true (skip fieldMap)
+    if (args?.__raw === 'true') return result;
 
     // Apply fieldMap if present to extract structured data
     if (operation.fieldMap) {

@@ -87,6 +87,10 @@ export interface PluginHook {
   action?: string;                  // e.g. "update_status"
   statusMap?: string;               // e.g. "in_review", "done" — resolved via plugin statusMap
   iterate?: string;                 // e.g. "subtasks", "criteria" — execute once per item
+  store?: {
+    key: string;                    // e.g. "subtasks" — key in plugin_context
+    field: string;                  // JSONPath in MCP response, e.g. "$.id"
+  };
 }
 
 export interface PluginPhase {

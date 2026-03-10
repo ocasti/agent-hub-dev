@@ -50,6 +50,24 @@ export type TaskStatus =
   | 'completed'
   | 'failed';
 
+export interface Subtask {
+  id: string;
+  description: string;
+  completed: boolean;
+}
+
+export interface PluginCriterion {
+  id: string;
+  description: string;
+  completed: boolean;
+}
+
+export interface PluginContextData {
+  subtasks?: Subtask[];
+  criteria?: PluginCriterion[];
+  [key: string]: unknown;
+}
+
 export interface Task {
   id: string;
   projectId: string;
@@ -71,6 +89,7 @@ export interface Task {
   pmWorkItemId?: string;
   pmWorkItemUrl?: string;
   worktreePath?: string;
+  pluginContext?: Record<string, PluginContextData>;
   createdAt: string;
   updatedAt: string;
 }
@@ -450,6 +469,7 @@ export interface TaskRow {
   pm_work_item_id: string | null;
   pm_work_item_url: string | null;
   worktree_path: string | null;
+  plugin_context: string;
   created_at: string;
   updated_at: string;
 }
@@ -491,6 +511,9 @@ export interface ElectronAPI {
   createTask: (task: Partial<Task>) => Promise<Task>;
   updateTask: (id: string, updates: Partial<Task>) => Promise<Task>;
   deleteTask: (id: string) => Promise<void>;
+  completeSubtask: (taskId: string, pluginId: string, subtaskId: string, completed: boolean) => Promise<Task>;
+  refreshSubtasks: (taskId: string) => Promise<Task>;
+  completeCriterion: (taskId: string, pluginId: string, criterionId: string, completed: boolean) => Promise<Task>;
 
   runAgent: (taskId: string, phase?: string) => Promise<void>;
   stopAgent: (taskId: string) => Promise<void>;

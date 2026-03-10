@@ -15,12 +15,13 @@ This document describes everything needed to create a plugin for Agent Hub. Plug
 5. [manifest.json — Workflow Integration](#manifestjson--workflow-integration)
 6. [setup.json — Installation Steps](#setupjson--installation-steps)
 7. [Workflow Hooks Reference](#workflow-hooks-reference)
-8. [Field Mapping with JSONPath](#field-mapping-with-jsonpath)
-9. [Plugin Capabilities & Conflict Resolution](#plugin-capabilities--conflict-resolution)
-10. [Level 2 Plugins — TypeScript Adapters](#level-2-plugins--typescript-adapters)
-11. [Distribution & Installation](#distribution--installation)
-12. [Complete Examples](#complete-examples)
-13. [Testing Your Plugin](#testing-your-plugin)
+8. [Iterate, Store & Plugin Context](#iterate-store--plugin-context)
+9. [Field Mapping with JSONPath](#field-mapping-with-jsonpath)
+10. [Plugin Capabilities & Conflict Resolution](#plugin-capabilities--conflict-resolution)
+11. [Level 2 Plugins — TypeScript Adapters](#level-2-plugins--typescript-adapters)
+12. [Distribution & Installation](#distribution--installation)
+13. [Complete Examples](#complete-examples)
+14. [Testing Your Plugin](#testing-your-plugin)
 
 ---
 
@@ -415,7 +416,11 @@ This is the core of the plugin. It defines HOW the plugin interacts with Agent H
         "args": { "key": "value — arguments with {variable} templates" },
         "action": "string — built-in action type (optional, alternative to tool)",
         "template": "string — message template for notification actions",
-        "iterate": "string — context array to iterate over (e.g., 'subtasks', 'criteria')",
+        "iterate": "string — collection to iterate over (see Iterate & Store section)",
+        "store": {
+          "key": "string — key name to store results under in plugin_context (e.g., 'subtasks')",
+          "field": "string — JSONPath to extract from each MCP response (e.g., '$.id')"
+        },
         "priority": "number — execution order, lower = first (default: 50)",
         "blocking": "boolean — if true, hook failure stops the workflow (default: false)",
         "description": "string — human-readable description of what this hook does"
@@ -464,9 +469,10 @@ Variables available in `args` templates, resolved at runtime:
 | `{prNumber}` | PR number | After ship phase |
 | `{model}` | AI model (sonnet/opus) | All hooks |
 | `{reviewLoop}` | Current review loop number | Quality gate hooks |
-| `{subtask}` | Current subtask text (when iterating) | With `iterate: "subtasks"` |
-| `{subtaskId}` | Current subtask ID (when iterating) | With `iterate: "subtasks"` |
-| `{criterionId}` | Current criterion ID (when iterating) | With `iterate: "criteria"` |
+| `{item}` | Current item text (generic, works with any iterate) | Any hook with `iterate` |
+| `{subtask}` | Current subtask description (alias for `{item}` on subtasks) | With `iterate` on subtask collections |
+| `{subtaskId}` | Current subtask ID (from stored object) | With `iterate: "stored.subtasks"` |
+| `{criterionId}` | Current criterion ID (from stored object) | With `iterate: "stored.criteriaIds"` |
 | `{issueTitle}` | QA issue title | `on:quality_fail` |
 | `{issueDetail}` | QA issue detail | `on:quality_fail` |
 | `{error}` | Error message | `on:workflow_failed` |
@@ -559,25 +565,26 @@ Variables available in `args` templates, resolved at runtime:
         "tool": "add_dev_task",
         "args": { "requirement_id": "{pmWorkItemId}", "description": "{subtask}" },
         "iterate": "subtasks",
+        "store": { "key": "subtasks", "field": "$.id" },
         "priority": 20,
-        "blocking": false,
-        "description": "Create dev tasks in PM from the approved plan"
+        "blocking": true,
+        "description": "Create dev tasks in PM from plan; store returned IDs in plugin_context"
       },
       "on:implement_complete": {
         "tool": "complete_dev_task",
         "args": { "task_id": "{subtaskId}" },
-        "iterate": "subtasks",
+        "iterate": "stored.subtasks",
         "priority": 20,
         "blocking": false,
-        "description": "Mark dev tasks as complete in PM"
+        "description": "Mark stored dev tasks as complete in PM"
       },
       "on:quality_pass": {
         "tool": "complete_acceptance_criterion",
         "args": { "criterion_id": "{criterionId}" },
-        "iterate": "criteria",
+        "iterate": "stored.criteriaIds",
         "priority": 20,
         "blocking": false,
-        "description": "Mark acceptance criteria as met in PM"
+        "description": "Mark stored acceptance criteria as met in PM"
       },
       "on:quality_fail": {
         "tool": "create_qa_issue",
@@ -800,6 +807,106 @@ Setup step parameters can reference config values using `{config.fieldName}`:
 | `on:deploy_failed` | CI/CD plugin | taskId, error |
 
 Plugins can emit custom events. Any other plugin can listen to them. The event name must be prefixed with the plugin ID to avoid collisions: `on:{pluginId}:{eventName}`.
+
+---
+
+## Iterate, Store & Plugin Context
+
+Hooks can iterate over collections and persist results for use by later hooks. This enables workflows like: "create subtasks in PM during planning, then close them when implementation completes."
+
+### How it works
+
+Each task has a `plugin_context` JSON column in the database. Each plugin gets its own namespace:
+
+```json
+{
+  "pm-codebranch": {
+    "subtasks": [
+      { "id": "dt-101", "description": "Create API endpoint", "completed": false },
+      { "id": "dt-102", "description": "Add validation", "completed": true }
+    ],
+    "criteriaIds": [
+      { "id": "ac-50", "description": "Tests pass", "completed": false }
+    ]
+  }
+}
+```
+
+### `iterate` — Fan out a hook over a collection
+
+The `iterate` field tells the engine to execute the hook's operation once per item in the collection.
+
+**Sources for iterate:**
+
+| Value | Source | Example |
+|-------|--------|---------|
+| `"subtasks"` | `context.extra.subtasks` (from orchestrator) or `plugin_context[pluginId].subtasks` | Plan subtasks passed by orchestrator |
+| `"stored.subtasks"` | `plugin_context[pluginId].subtasks` (previously stored) | IDs saved by a prior `store` hook |
+| `"stored.criteriaIds"` | `plugin_context[pluginId].criteriaIds` | Criteria IDs from enrichment |
+
+When iterating over objects, these template variables are set per item:
+
+- `{item}` — the item description (or JSON if no description)
+- `{subtask}` — alias for description
+- `{subtaskId}` — the item's `id` field
+- `{criterionId}` — alias for `id`
+
+### `store` — Save MCP response IDs for later
+
+When a hook has `store: { key, field }`, the engine extracts `field` from each MCP response and saves the results into `plugin_context[pluginId][key]` as an array of `{ id, description, completed }` objects.
+
+**Example — Create and track subtasks:**
+
+```json
+{
+  "on:plan_approved": {
+    "tool": "add_dev_task",
+    "args": { "requirement_id": "{pmWorkItemId}", "description": "{subtask}" },
+    "iterate": "subtasks",
+    "store": { "key": "subtasks", "field": "$.id" },
+    "blocking": true,
+    "description": "Create dev tasks in PM; store IDs for later completion"
+  }
+}
+```
+
+This hook:
+1. Iterates over the plan's subtasks (from `context.extra.subtasks`)
+2. Calls `add_dev_task` for each one
+3. Extracts `$.id` from each MCP response
+4. Stores results in `plugin_context["my-plugin"].subtasks` as `[{ id: "dt-101", description: "Create API endpoint", completed: false }, ...]`
+
+**Example — Close stored subtasks:**
+
+```json
+{
+  "on:implement_complete": {
+    "tool": "complete_dev_task",
+    "args": { "task_id": "{subtaskId}" },
+    "iterate": "stored.subtasks",
+    "description": "Mark each stored dev task as complete"
+  }
+}
+```
+
+This hook:
+1. Reads `plugin_context["my-plugin"].subtasks` (saved by the previous hook)
+2. Iterates over each stored subtask object
+3. Calls `complete_dev_task` with each subtask's `id`
+
+### Enrichment auto-stores subtasks
+
+When a `on:before_spec` enrichment fetches data from PM and the response contains `subtasks`/`subtaskIds` (or `dev_tasks`/`dev_task_ids`) arrays, the engine automatically stores them in `plugin_context`. This means PM subtasks are available in the UI immediately after spec enrichment, without needing a separate `store` hook.
+
+### UI — Subtasks section in Task Detail
+
+Subtasks stored in `plugin_context` are displayed in the Task Detail view as a checklist between Acceptance Criteria and Images. Users can:
+
+- See which subtasks are done vs pending (with counter badge)
+- Manually toggle checkboxes to complete/uncomplete subtasks
+- Toggling calls the PM plugin's `completeSubtask` operation via MCP to sync
+
+The section only appears when `plugin_context` contains subtask data.
 
 ---
 

@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { Task, Project, Log, ActiveAgent, Settings, LicenseLimits, TaskStatus } from '../lib/types';
+import { executePluginOperation } from '../lib/ipc';
 import Badge from './ui/Badge';
 import ProgressBar from './ui/ProgressBar';
 import TaskForm from './TaskForm';
@@ -97,6 +98,28 @@ export default function TasksView({
 
   // Check if any project has a PM plugin active (to show Import button)
   const hasPmPlugin = useMemo(() => projects.some((p) => p.pluginPm), [projects]);
+
+  // Fetch PM statuses for all tasks with PM links (single MCP call per plugin)
+  const [pmStatuses, setPmStatuses] = useState<Record<string, string>>({});
+  useEffect(() => {
+    const pmPluginIds = new Set(projects.filter((p) => p.pluginPm).map((p) => p.pluginPm!));
+    if (pmPluginIds.size === 0 || !tasks.some((t) => t.pmWorkItemId)) return;
+    for (const pluginId of pmPluginIds) {
+      executePluginOperation(pluginId, 'listMyWork', { __raw: 'true' })
+        .then((raw) => {
+          const items = Array.isArray(raw) ? raw : [];
+          const map: Record<string, string> = {};
+          for (const item of items) {
+            const r = item as Record<string, unknown>;
+            const id = String(r.id || '');
+            const status = r.status_name || r.statusName || r.status || r.state;
+            if (id && status) map[id] = String(status);
+          }
+          setPmStatuses((prev) => ({ ...prev, ...map }));
+        })
+        .catch(() => { /* non-critical */ });
+    }
+  }, [projects, tasks.length]);
 
   function handleBulkImport(projectId: string, items: ImportItem[]) {
     for (const item of items) {
@@ -324,6 +347,25 @@ export default function TasksView({
                             <span className="text-xs bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 px-2 py-0.5 rounded font-mono">
                               PR #{ag?.pr || task.prNumber}
                             </span>
+                          )}
+                          {task.pmWorkItemId && (
+                            task.pmWorkItemUrl ? (
+                              <a
+                                href={task.pmWorkItemUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="inline-flex items-center gap-1 text-xs bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors"
+                                title="Open in PM tool"
+                              >
+                                <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg>
+                                PM{pmStatuses[task.pmWorkItemId] ? `: ${pmStatuses[task.pmWorkItemId]}` : ''}
+                              </a>
+                            ) : (
+                              <span className="text-xs bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded">
+                                PM{pmStatuses[task.pmWorkItemId] ? `: ${pmStatuses[task.pmWorkItemId]}` : ''}
+                              </span>
+                            )
                           )}
                           <Badge status={task.status} />
                           {task.worktreePath && (

@@ -55,6 +55,9 @@ export function createQueries(db: Database.Database) {
     updateCriteriaStatus: db.prepare(
       'UPDATE tasks SET criteria_status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?'
     ),
+    updatePluginContext: db.prepare(
+      'UPDATE tasks SET plugin_context = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+    ),
     deleteTask: db.prepare('DELETE FROM tasks WHERE id = ?'),
     deleteAgentRunsByTask: db.prepare('DELETE FROM agent_runs WHERE task_id = ?'),
     nullifyLogsByTask: db.prepare('UPDATE logs SET task_id = NULL WHERE task_id = ?'),

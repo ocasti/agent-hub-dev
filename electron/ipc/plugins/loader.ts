@@ -261,14 +261,10 @@ export async function getRegistryCatalog(
 export function loadAllPlugins(): InstalledPlugin[] {
   const installed = getInstalledPlugins();
 
-  // Load manifests for installed plugins
+  // Load manifests for installed plugins (always re-read from disk to pick up changes)
   for (const plugin of installed) {
-    if (!plugin.manifest) {
-      plugin.manifest = loadPluginManifest(plugin.pluginDir) || undefined;
-    }
-    if (!plugin.workflow) {
-      plugin.workflow = loadPluginWorkflow(plugin.pluginDir) || undefined;
-    }
+    plugin.manifest = loadPluginManifest(plugin.pluginDir) || plugin.manifest;
+    plugin.workflow = loadPluginWorkflow(plugin.pluginDir) || plugin.workflow;
   }
 
   return installed;

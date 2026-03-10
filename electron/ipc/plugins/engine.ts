@@ -49,7 +49,7 @@ export async function fireHook(
         continue;
       }
 
-      const exec = () => executeHookOperation(event, hook, operation, vars, plugin);
+      const exec = () => executeHookOperation(event, hook, operation, vars, plugin, context, db);
 
       if (hook.blocking) {
         await exec();
@@ -72,7 +72,9 @@ async function executeHookOperation(
   hook: PluginHook,
   operation: PluginOperation,
   vars: Record<string, string>,
-  plugin: InstalledPlugin
+  plugin: InstalledPlugin,
+  context: HookContext,
+  db: Database.Database
 ): Promise<void> {
   // Handle action: "update_status" — resolve statusMap to a status ID
   if (hook.action === 'update_status' && hook.statusMap) {
@@ -100,12 +102,51 @@ async function executeHookOperation(
     return;
   }
 
-  // Handle iterate: call operation once per item
+  // Handle iterate: call operation once per item in the collection
   if (hook.iterate) {
-    // iterate values should be passed in context.extra
-    // For now, just execute once (iterate requires richer context from orchestrator)
-    console.log(`[plugins] Hook ${event}: iterate "${hook.iterate}" — executing single call (batch not yet wired)`);
-    await executeOperation(operation, vars);
+    const items = resolveIterateCollection(hook.iterate, context, plugin.id, db);
+    if (!items || items.length === 0) {
+      console.log(`[plugins] Hook ${event}: iterate "${hook.iterate}" — no items found`);
+      return;
+    }
+
+    const collectedIds: string[] = [];
+    const sourceDescs: string[] = [];
+
+    for (const item of items) {
+      const iterVars = { ...vars };
+      if (typeof item === 'object' && item !== null) {
+        const obj = item as Record<string, unknown>;
+        iterVars.item = obj.description ? String(obj.description) : JSON.stringify(item);
+        iterVars.subtask = String(obj.description || '');
+        iterVars.subtaskId = String(obj.id || '');
+        iterVars.criterionId = String(obj.id || '');
+      } else {
+        iterVars.item = String(item);
+        iterVars.subtask = String(item);
+      }
+
+      try {
+        const result = await executeOperation(operation, iterVars);
+
+        if (hook.store && result) {
+          const extracted = extractFieldFromResult(result, hook.store.field);
+          if (extracted) {
+            collectedIds.push(extracted);
+            sourceDescs.push(iterVars.subtask || iterVars.item);
+          }
+        }
+      } catch (err) {
+        console.error(`[plugins] Hook ${event}: iterate item failed:`, (err as Error).message);
+      }
+    }
+
+    // Store collected IDs in plugin_context
+    if (hook.store && collectedIds.length > 0 && context.taskId) {
+      storeCollectedInPluginContext(db, context.taskId, plugin.id, hook.store.key, sourceDescs, collectedIds);
+    }
+
+    console.log(`[plugins] Hook ${event}: iterated ${items.length} item(s)`);
     return;
   }
 
@@ -137,6 +178,23 @@ export async function getEnrichmentData(
         const data = await executeOperation(operation, vars);
         if (data) {
           result[`${plugin.id}:${enrichment.target}`] = data;
+
+          // Persist subtask data from enrichment into plugin_context
+          if (context.taskId) {
+            const mapped = data as Record<string, unknown>;
+            const subtaskDescs = mapped.subtasks || mapped.dev_tasks;
+            const subtaskIds = mapped.subtaskIds || mapped.dev_task_ids;
+            if (Array.isArray(subtaskDescs) && Array.isArray(subtaskIds)) {
+              const subtasks = (subtaskDescs as string[]).map((desc, i) => ({
+                id: String((subtaskIds as unknown[])[i] || ''),
+                description: String(desc),
+                completed: false,
+              }));
+              if (subtasks.length > 0) {
+                storeSubtasksInPluginContext(db, context.taskId, plugin.id, subtasks);
+              }
+            }
+          }
         }
       } catch (err) {
         console.error(`[plugins] Enrichment ${event} error:`, (err as Error).message || err);
@@ -325,6 +383,7 @@ function getNormalizedHooks(plugin: InstalledPlugin): PluginHook[] {
       action: hookDef.action as string | undefined,
       statusMap: hookDef.statusMap as string | undefined,
       iterate: hookDef.iterate as string | undefined,
+      store: hookDef.store as { key: string; field: string } | undefined,
     } as PluginHook);
   }
   return hooks;
@@ -455,4 +514,101 @@ export function hasCodeHostingPlugin(projectId: string, db: Database.Database): 
   const project = db.prepare('SELECT code_hosting FROM projects WHERE id = ?').get(projectId) as
     { code_hosting: string | null } | undefined;
   return !!project?.code_hosting;
+}
+
+// ── Iterate + Store Helpers ──────────────────────────────────────────────────────
+
+function resolveIterateCollection(
+  iterateKey: string,
+  context: HookContext,
+  pluginId: string,
+  db: Database.Database
+): unknown[] {
+  // "stored.XXX" reads from plugin_context saved by a previous hook
+  if (iterateKey.startsWith('stored.')) {
+    const storedKey = iterateKey.replace('stored.', '');
+    if (!context.taskId) return [];
+    const row = db.prepare('SELECT plugin_context FROM tasks WHERE id = ?')
+      .get(context.taskId) as { plugin_context: string } | undefined;
+    if (!row) return [];
+    const pc = JSON.parse(row.plugin_context || '{}');
+    return Array.isArray(pc[pluginId]?.[storedKey]) ? pc[pluginId][storedKey] : [];
+  }
+
+  // Check context.extra for the collection (passed by orchestrator)
+  if (context.extra && Array.isArray(context.extra[iterateKey])) {
+    return context.extra[iterateKey] as unknown[];
+  }
+
+  // Check plugin_context for the collection
+  if (context.taskId) {
+    const row = db.prepare('SELECT plugin_context FROM tasks WHERE id = ?')
+      .get(context.taskId) as { plugin_context: string } | undefined;
+    if (row) {
+      const pc = JSON.parse(row.plugin_context || '{}');
+      if (Array.isArray(pc[pluginId]?.[iterateKey])) {
+        return pc[pluginId][iterateKey];
+      }
+    }
+  }
+
+  return [];
+}
+
+function extractFieldFromResult(result: unknown, fieldPath: string): string | null {
+  if (!result || typeof result !== 'object') return null;
+  const clean = fieldPath.replace(/^\$\./, '');
+  let current: unknown = result;
+  for (const part of clean.split('.')) {
+    if (current && typeof current === 'object') {
+      current = (current as Record<string, unknown>)[part];
+    } else return null;
+  }
+  return current != null ? String(current) : null;
+}
+
+function storeCollectedInPluginContext(
+  db: Database.Database,
+  taskId: string,
+  pluginId: string,
+  key: string,
+  sourceDescs: string[],
+  collectedIds: string[]
+): void {
+  const row = db.prepare('SELECT plugin_context FROM tasks WHERE id = ?')
+    .get(taskId) as { plugin_context: string } | undefined;
+  if (!row) return;
+
+  const pc = JSON.parse(row.plugin_context || '{}');
+  if (!pc[pluginId]) pc[pluginId] = {};
+  if (!pc[pluginId][key]) pc[pluginId][key] = [];
+
+  for (let i = 0; i < collectedIds.length; i++) {
+    pc[pluginId][key].push({
+      id: collectedIds[i],
+      description: sourceDescs[i] || '',
+      completed: false,
+    });
+  }
+
+  db.prepare('UPDATE tasks SET plugin_context = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+    .run(JSON.stringify(pc), taskId);
+}
+
+function storeSubtasksInPluginContext(
+  db: Database.Database,
+  taskId: string,
+  pluginId: string,
+  subtasks: { id: string; description: string; completed: boolean }[]
+): void {
+  const row = db.prepare('SELECT plugin_context FROM tasks WHERE id = ?')
+    .get(taskId) as { plugin_context: string } | undefined;
+  if (!row) return;
+
+  const pc = JSON.parse(row.plugin_context || '{}');
+  if (!pc[pluginId]) pc[pluginId] = {};
+  pc[pluginId].subtasks = subtasks;
+
+  db.prepare('UPDATE tasks SET plugin_context = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+    .run(JSON.stringify(pc), taskId);
 }

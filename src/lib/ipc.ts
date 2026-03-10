@@ -42,6 +42,13 @@ export const updateTask = (id: string, updates: Partial<Task>): Promise<Task> =>
   api().updateTask(id, updates);
 export const deleteTask = (id: string): Promise<void> => api().deleteTask(id);
 
+// ── Task Subtasks ──
+export const completeSubtask = (taskId: string, pluginId: string, subtaskId: string, completed: boolean) =>
+  api().completeSubtask(taskId, pluginId, subtaskId, completed);
+export const refreshSubtasks = (taskId: string) => api().refreshSubtasks(taskId);
+export const completeCriterion = (taskId: string, pluginId: string, criterionId: string, completed: boolean) =>
+  api().completeCriterion(taskId, pluginId, criterionId, completed);
+
 // ── Agent ──
 export const runAgent = (taskId: string, phase?: string): Promise<void> =>
   api().runAgent(taskId, phase);

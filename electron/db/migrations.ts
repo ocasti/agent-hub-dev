@@ -205,4 +205,11 @@ export const MIGRATIONS = [
       INSERT OR IGNORE INTO settings (key, value) VALUES ('default_ai_agent', 'claude');
     `,
   },
+  {
+    version: 17,
+    name: '017_plugin_context',
+    sql: `
+      ALTER TABLE tasks ADD COLUMN plugin_context TEXT DEFAULT '{}';
+    `,
+  },
 ];

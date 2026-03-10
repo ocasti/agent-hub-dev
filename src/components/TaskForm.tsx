@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { Project, Task, LicenseLimits, PluginTaskField } from '../lib/types';
+import type { Project, Task, LicenseLimits, PluginTaskField, Subtask, PluginCriterion } from '../lib/types';
 import { CORE_SKILLS } from '../lib/skills';
-import { refineWithAI, selectImages, getTaskFieldsForProject, executePluginOperation, listPmWorkItems } from '../lib/ipc';
+import { refineWithAI, selectImages, getTaskFieldsForProject, executePluginOperation, listPmWorkItems, refreshSubtasks } from '../lib/ipc';
 import SkillTag from './ui/SkillTag';
-import { IconWarning, IconCircleDot, IconRuler, IconImage } from './ui/Icons';
+import { IconWarning, IconCircleDot, IconRuler, IconImage, IconRefresh } from './ui/Icons';
 
 // ── Types for dynamic field state ────────────────────────────────────────────
 
@@ -181,6 +181,29 @@ export default function TaskForm({ projects, task, licenseLimits, onSave, onCanc
   const fieldRefs = useRef<Record<string, React.RefObject<HTMLDivElement | null>>>({});
   // Extra form values from plugin fields (beyond pmWorkItemId/pmWorkItemUrl)
   const [extraFields, setExtraFields] = useState<Record<string, string>>({});
+  // PM subtasks fetched when user selects a PM work item
+  const [pmSubtasks, setPmSubtasks] = useState<{ pluginId: string; subtasks: Subtask[] } | null>(() => {
+    if (task?.pluginContext) {
+      for (const [pid, data] of Object.entries(task.pluginContext)) {
+        if (data.subtasks && data.subtasks.length > 0) {
+          return { pluginId: pid, subtasks: data.subtasks };
+        }
+      }
+    }
+    return null;
+  });
+  // PM criteria (acceptance criteria with IDs from PM tool)
+  const [pmCriteria, setPmCriteria] = useState<{ pluginId: string; criteria: PluginCriterion[] } | null>(() => {
+    if (task?.pluginContext) {
+      for (const [pid, data] of Object.entries(task.pluginContext)) {
+        if (data.criteria && data.criteria.length > 0) {
+          return { pluginId: pid, criteria: data.criteria };
+        }
+      }
+    }
+    return null;
+  });
+  const [refreshingPmData, setRefreshingPmData] = useState(false);
 
   const origStatus = task?.status;
   const proj = projects.find((p) => p.id === form.projectId);
@@ -307,6 +330,41 @@ export default function TaskForm({ projects, task, licenseLimits, onSave, onCanc
             setForm((prev) => ({ ...prev, ...updates }));
           }
         }
+
+        // Extract PM subtasks and criteria from the fieldMap-transformed response
+        if (data) {
+          const descs = data.subtasks as string[] | undefined;
+          const ids = data.subtaskIds as string[] | undefined;
+          const stCompleted = data.subtasksCompleted as unknown[] | undefined;
+          if (Array.isArray(descs) && descs.length > 0) {
+            setPmSubtasks({
+              pluginId: field.pluginId,
+              subtasks: descs.map((desc, i) => ({
+                id: String(ids?.[i] ?? ''),
+                description: String(desc),
+                completed: Array.isArray(stCompleted) ? !!stCompleted[i] : false,
+              })),
+            });
+          } else {
+            setPmSubtasks(null);
+          }
+
+          const cDescs = data.criteria as string[] | undefined;
+          const cIds = data.criteriaIds as string[] | undefined;
+          const crCompleted = data.criteriaCompleted as unknown[] | undefined;
+          if (Array.isArray(cDescs) && cDescs.length > 0) {
+            setPmCriteria({
+              pluginId: field.pluginId,
+              criteria: cDescs.map((desc, i) => ({
+                id: String(cIds?.[i] ?? ''),
+                description: String(desc),
+                completed: Array.isArray(crCompleted) ? !!crCompleted[i] : false,
+              })),
+            });
+          } else {
+            setPmCriteria(null);
+          }
+        }
       } catch (err) {
         console.error(`[TaskForm] Failed to fetch detail for ${field.key}:`, err);
       } finally {
@@ -325,8 +383,11 @@ export default function TaskForm({ projects, task, licenseLimits, onSave, onCanc
     } else {
       setExtraFields((prev) => ({ ...prev, [field.key]: '' }));
     }
-    // Also clear any fields that were auto-filled by onSelect.fill
-    // (user can manually edit them after clearing)
+    // Clear PM data when the PM item is cleared
+    if (field.key === 'pmWorkItemId') {
+      setPmSubtasks(null);
+      setPmCriteria(null);
+    }
   }, [form]);
 
   const handleRefine = async (field: 'description' | 'acceptanceCriteria') => {
@@ -359,6 +420,16 @@ export default function TaskForm({ projects, task, licenseLimits, onSave, onCanc
       .split('\n')
       .map((c) => c.replace(/^[-•*]\s*/, '').trim())
       .filter(Boolean);
+    // Build pluginContext with PM subtasks and criteria if available
+    let pluginContext: Record<string, Record<string, unknown>> | undefined;
+    const pmPluginId = pmSubtasks?.pluginId || pmCriteria?.pluginId;
+    if (pmPluginId) {
+      const ctx: Record<string, unknown> = {};
+      if (pmSubtasks) ctx.subtasks = pmSubtasks.subtasks;
+      if (pmCriteria) ctx.criteria = pmCriteria.criteria;
+      pluginContext = { [pmPluginId]: ctx };
+    }
+
     onSave({
       id: task?.id,
       projectId: form.projectId,
@@ -369,6 +440,7 @@ export default function TaskForm({ projects, task, licenseLimits, onSave, onCanc
       model: form.model,
       pmWorkItemId: form.pmWorkItemId || undefined,
       pmWorkItemUrl: form.pmWorkItemUrl || undefined,
+      pluginContext,
     });
   };
 
@@ -593,6 +665,148 @@ export default function TaskForm({ projects, task, licenseLimits, onSave, onCanc
           <p className="text-xs text-gray-300 mt-1">{t('form.criteriaHelp')}</p>
         </div>
         {getFieldsForPosition('after:criteria')}
+
+        {/* PM Data sections (read-only preview with shared refresh) */}
+        {form.pmWorkItemId && (
+          <>
+            {/* Refresh button for all PM data */}
+            {task?.id && (
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setRefreshingPmData(true);
+                    try {
+                      const updated = await refreshSubtasks(task!.id);
+                      if (updated.pluginContext) {
+                        for (const [pid, data] of Object.entries(updated.pluginContext)) {
+                          setPmSubtasks(data.subtasks?.length ? { pluginId: pid, subtasks: data.subtasks } : null);
+                          setPmCriteria(data.criteria?.length ? { pluginId: pid, criteria: data.criteria } : null);
+                          break;
+                        }
+                      }
+                    } catch (err) {
+                      console.error('Failed to refresh PM data:', err);
+                    } finally {
+                      setRefreshingPmData(false);
+                    }
+                  }}
+                  disabled={refreshingPmData}
+                  className="text-xs text-indigo-600 dark:text-indigo-400 font-medium flex items-center gap-1 hover:text-indigo-800 dark:hover:text-indigo-300 disabled:opacity-50"
+                >
+                  <IconRefresh className={`w-3 h-3 ${refreshingPmData ? 'animate-spin' : ''}`} />
+                  {t('detail.refreshSubtasks', 'Refresh from PM')}
+                </button>
+              </div>
+            )}
+
+            {/* PM Criteria */}
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1.5 uppercase tracking-wider flex items-center gap-2">
+                {t('detail.pmCriteria', 'PM Criteria')}
+                {pmCriteria && pmCriteria.criteria.length > 0 && (
+                  <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
+                    pmCriteria.criteria.filter((c) => c.completed).length === pmCriteria.criteria.length
+                      ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400'
+                      : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400'
+                  }`}>
+                    {pmCriteria.criteria.filter((c) => c.completed).length}/{pmCriteria.criteria.length}
+                  </span>
+                )}
+              </label>
+              {pmCriteria && pmCriteria.criteria.length > 0 ? (
+                <div className="border border-gray-200 dark:border-gray-600 rounded-lg p-3 space-y-1.5 bg-gray-50 dark:bg-gray-900">
+                  {pmCriteria.criteria.map((cr) => (
+                    <div key={cr.id} className="flex items-center gap-2">
+                      <span className={`w-4 h-4 rounded flex items-center justify-center text-[10px] flex-shrink-0 ${
+                        cr.completed
+                          ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400'
+                          : 'bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500'
+                      }`}>
+                        {cr.completed ? '✓' : '○'}
+                      </span>
+                      <span className={`text-sm ${cr.completed ? 'line-through text-gray-400 dark:text-gray-500' : 'text-gray-700 dark:text-gray-300'}`}>
+                        {cr.description}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : form.acceptanceCriteria.trim() ? (
+                <div className="flex flex-col items-start gap-2">
+                  <p className="text-xs text-gray-400 dark:text-gray-500 italic">
+                    {t('form.criteriaAsTextHint', 'Criteria are plain text. Convert to a trackable checklist?')}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const lines = form.acceptanceCriteria
+                        .split('\n')
+                        .map((l) => l.replace(/^[-•*\d.)\]]\s*/, '').trim())
+                        .filter(Boolean);
+                      if (lines.length > 0) {
+                        const pluginId = proj?.pluginPm || '_local';
+                        setPmCriteria({
+                          pluginId,
+                          criteria: lines.map((desc, i) => ({
+                            id: `local-${Date.now()}-${i}`,
+                            description: desc,
+                            completed: false,
+                          })),
+                        });
+                      }
+                    }}
+                    className="text-xs font-medium px-2.5 py-1 rounded-lg border border-indigo-300 dark:border-indigo-700 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors"
+                  >
+                    {t('form.convertToChecklist', 'Convert to checklist')}
+                  </button>
+                </div>
+              ) : (
+                <p className="text-xs text-gray-400 dark:text-gray-500 italic">
+                  {t('detail.noPmCriteria', 'No PM criteria. Click refresh to fetch.')}
+                </p>
+              )}
+            </div>
+
+            {/* PM Subtasks */}
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1.5 uppercase tracking-wider flex items-center gap-2">
+                {t('detail.subtasks', 'Subtasks')}
+                {pmSubtasks && pmSubtasks.subtasks.length > 0 && (
+                  <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
+                    pmSubtasks.subtasks.filter((s) => s.completed).length === pmSubtasks.subtasks.length
+                      ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400'
+                      : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400'
+                  }`}>
+                    {pmSubtasks.subtasks.filter((s) => s.completed).length}/{pmSubtasks.subtasks.length}
+                  </span>
+                )}
+              </label>
+              {pmSubtasks && pmSubtasks.subtasks.length > 0 ? (
+                <div className="border border-gray-200 dark:border-gray-600 rounded-lg p-3 space-y-1.5 bg-gray-50 dark:bg-gray-900">
+                  {pmSubtasks.subtasks.map((st) => (
+                    <div key={st.id} className="flex items-center gap-2">
+                      <span className={`w-4 h-4 rounded flex items-center justify-center text-[10px] flex-shrink-0 ${
+                        st.completed
+                          ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400'
+                          : 'bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500'
+                      }`}>
+                        {st.completed ? '✓' : '○'}
+                      </span>
+                      <span className={`text-sm ${st.completed ? 'line-through text-gray-400 dark:text-gray-500' : 'text-gray-700 dark:text-gray-300'}`}>
+                        {st.description}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-gray-400 dark:text-gray-500 italic">
+                  {t('detail.noSubtasks', 'No subtasks yet. Click refresh to fetch from PM.')}
+                </p>
+              )}
+            </div>
+          </>
+
+        )}
 
         {/* Images */}
         {getFieldsForPosition('before:images')}

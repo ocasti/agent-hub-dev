@@ -22,6 +22,7 @@ interface TaskInput {
   branchName?: string | null;
   pmWorkItemId?: string | null;
   pmWorkItemUrl?: string | null;
+  pluginContext?: Record<string, unknown>;
 }
 
 function rowToTask(row: Record<string, unknown>) {
@@ -46,6 +47,7 @@ function rowToTask(row: Record<string, unknown>) {
     pmWorkItemId: (row.pm_work_item_id as string) || undefined,
     pmWorkItemUrl: (row.pm_work_item_url as string) || undefined,
     worktreePath: (row.worktree_path as string) || undefined,
+    pluginContext: JSON.parse((row.plugin_context as string) || '{}'),
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   };
@@ -78,6 +80,10 @@ export function registerTaskHandlers(ipcMain: IpcMain, db: Database.Database) {
       task.pmWorkItemId || null,
       task.pmWorkItemUrl || null
     );
+    // Save plugin_context if provided (e.g., PM subtasks from TaskForm)
+    if (task.pluginContext) {
+      q.updatePluginContext.run(JSON.stringify(task.pluginContext), id);
+    }
     return rowToTask(q.getTask.get(id) as Record<string, unknown>);
   });
 
@@ -105,6 +111,14 @@ export function registerTaskHandlers(ipcMain: IpcMain, db: Database.Database) {
       updates.pmWorkItemUrl !== undefined ? updates.pmWorkItemUrl : (existing.pm_work_item_url as string | null),
       id
     );
+
+    // Save plugin_context if provided (e.g., PM subtasks from TaskForm)
+    if (updates.pluginContext) {
+      // Merge with existing plugin_context instead of overwriting
+      const existingPc = JSON.parse((existing.plugin_context as string) || '{}');
+      const merged = { ...existingPc, ...updates.pluginContext };
+      q.updatePluginContext.run(JSON.stringify(merged), id);
+    }
 
     // Reset criteria_status when task is re-queued
     if (updates.status === 'queued') {
@@ -219,6 +233,168 @@ export function registerTaskHandlers(ipcMain: IpcMain, db: Database.Database) {
         // Branch doesn't exist or can't be deleted — ignore
       }
     }
+  });
+
+  // Subtask completion (toggle via PM plugin MCP)
+  ipcMain.handle('tasks:completeSubtask', async (_event, taskId: string, pluginId: string, subtaskId: string, completed: boolean) => {
+    const row = q.getTask.get(taskId) as Record<string, unknown>;
+    if (!row) throw new Error(`Task ${taskId} not found`);
+
+    const pc = JSON.parse((row.plugin_context as string) || '{}');
+    const pluginData = pc[pluginId];
+    if (!pluginData?.subtasks) throw new Error('No subtasks found for this plugin');
+
+    const subtask = (pluginData.subtasks as { id: string; description: string; completed: boolean }[])
+      .find((s) => s.id === subtaskId);
+    if (!subtask) throw new Error(`Subtask ${subtaskId} not found`);
+
+    subtask.completed = completed;
+    q.updatePluginContext.run(JSON.stringify(pc), taskId);
+
+    // Call PM tool via MCP to sync the completion status
+    try {
+      const { executeOperation, getActivePluginsForProject } = await import('../ipc/plugins/engine');
+      const projectId = row.project_id as string;
+      const plugins = getActivePluginsForProject(projectId, db);
+      const plugin = plugins.find((p) => p.id === pluginId);
+      if (plugin) {
+        const raw = plugin.workflow as unknown as Record<string, unknown>;
+        const operations = (raw?.operations as Record<string, { tool: string; server: string; args: Record<string, string> }>) || {};
+        const op = completed ? operations.completeSubtask : operations.uncompleteSubtask;
+        if (op) {
+          await executeOperation(op, { subtaskId, taskId }).catch((err: Error) => {
+            console.warn(`[tasks] MCP ${completed ? 'complete' : 'uncomplete'}Subtask failed:`, err.message);
+          });
+        }
+      }
+    } catch (err) {
+      console.warn(`[tasks] PM sync failed:`, (err as Error).message);
+    }
+
+    return rowToTask(q.getTask.get(taskId) as Record<string, unknown>);
+  });
+
+  // Criterion completion (toggle via PM plugin MCP)
+  ipcMain.handle('tasks:completeCriterion', async (_event, taskId: string, pluginId: string, criterionId: string, completed: boolean) => {
+    const row = q.getTask.get(taskId) as Record<string, unknown>;
+    if (!row) throw new Error(`Task ${taskId} not found`);
+
+    const pc = JSON.parse((row.plugin_context as string) || '{}');
+    const pluginData = pc[pluginId];
+    if (!pluginData?.criteria) throw new Error('No criteria found for this plugin');
+
+    const criterion = (pluginData.criteria as { id: string; description: string; completed: boolean }[])
+      .find((c) => c.id === criterionId);
+    if (!criterion) throw new Error(`Criterion ${criterionId} not found`);
+
+    criterion.completed = completed;
+    q.updatePluginContext.run(JSON.stringify(pc), taskId);
+
+    // Call PM tool via MCP to sync the completion status
+    try {
+      const { executeOperation, getActivePluginsForProject } = await import('../ipc/plugins/engine');
+      const projectId = row.project_id as string;
+      const plugins = getActivePluginsForProject(projectId, db);
+      const plugin = plugins.find((p) => p.id === pluginId);
+      if (plugin) {
+        const raw = plugin.workflow as unknown as Record<string, unknown>;
+        const operations = (raw?.operations as Record<string, { tool: string; server: string; args: Record<string, string> }>) || {};
+        const op = completed ? operations.completeCriterion : operations.uncompleteCriterion;
+        if (op) {
+          await executeOperation(op, { criterionId, taskId }).catch((err: Error) => {
+            console.warn(`[tasks] MCP ${completed ? 'complete' : 'uncomplete'}Criterion failed:`, err.message);
+          });
+        }
+      }
+    } catch (err) {
+      console.warn(`[tasks] PM sync failed:`, (err as Error).message);
+    }
+
+    return rowToTask(q.getTask.get(taskId) as Record<string, unknown>);
+  });
+
+  // Refresh subtasks from PM tool
+  ipcMain.handle('tasks:refreshSubtasks', async (_event, taskId: string) => {
+    const row = q.getTask.get(taskId) as Record<string, unknown>;
+    if (!row) throw new Error(`Task ${taskId} not found`);
+
+    const pmWorkItemId = row.pm_work_item_id as string | null;
+    if (!pmWorkItemId) throw new Error('Task has no PM work item');
+
+    const projectId = row.project_id as string;
+    const project = db.prepare('SELECT plugin_pm FROM projects WHERE id = ?').get(projectId) as { plugin_pm: string | null } | undefined;
+    const pluginId = project?.plugin_pm;
+    if (!pluginId) throw new Error('Project has no PM plugin');
+
+    // Load plugin and call fetch operation
+    const { loadAllPlugins } = await import('../ipc/plugins/loader');
+    const { getMcpServerConfig, callMcpHttpTool } = await import('../ipc/plugins/mcp-client');
+    const allPlugins = loadAllPlugins();
+    const plugin = allPlugins.find((p) => p.id === pluginId);
+    if (!plugin) throw new Error(`Plugin ${pluginId} not found`);
+
+    const raw = plugin.workflow as unknown as Record<string, unknown>;
+    const operations = (raw?.operations as Record<string, { tool: string; server: string; args: Record<string, string>; fieldMap?: Record<string, string> }>) || {};
+    const fetchOp = operations.fetch;
+    if (!fetchOp) throw new Error('Plugin has no fetch operation');
+
+    // Execute MCP call
+    const resolvedArgs: Record<string, string> = {};
+    for (const [k, v] of Object.entries(fetchOp.args)) {
+      resolvedArgs[k] = v.replace(/\{(\w+)\}/g, (_, key) => {
+        if (key === 'pmWorkItemId') return pmWorkItemId;
+        return plugin.config?.[key] || '';
+      });
+    }
+    const config = getMcpServerConfig(fetchOp.server);
+    const result = await callMcpHttpTool(config, fetchOp.tool, resolvedArgs);
+
+    // Apply fieldMap to extract subtasks/subtaskIds and criteria/criteriaIds + completion status
+    let descs: string[] = [];
+    let ids: string[] = [];
+    let stCompleted: unknown[] = [];
+    let cDescs: string[] = [];
+    let cIds: string[] = [];
+    let crCompleted: unknown[] = [];
+    if (fetchOp.fieldMap) {
+      const { extractFieldByPath } = await import('../ipc/plugins/index');
+      const mapped: Record<string, unknown> = {};
+      for (const [field, path] of Object.entries(fetchOp.fieldMap)) {
+        mapped[field] = extractFieldByPath(result, path);
+      }
+      if (Array.isArray(mapped.subtasks)) descs = mapped.subtasks as string[];
+      if (Array.isArray(mapped.subtaskIds)) ids = mapped.subtaskIds as string[];
+      if (Array.isArray(mapped.subtasksCompleted)) stCompleted = mapped.subtasksCompleted as unknown[];
+      if (Array.isArray(mapped.criteria)) cDescs = mapped.criteria as string[];
+      if (Array.isArray(mapped.criteriaIds)) cIds = mapped.criteriaIds as string[];
+      if (Array.isArray(mapped.criteriaCompleted)) crCompleted = mapped.criteriaCompleted as unknown[];
+    }
+
+    // Merge with existing plugin_context
+    // Remote completion status takes priority; fallback to local state
+    const pc = JSON.parse((row.plugin_context as string) || '{}');
+    if (!pc[pluginId]) pc[pluginId] = {};
+
+    // Subtasks
+    const existingSt = (pc[pluginId].subtasks || []) as { id: string; description: string; completed: boolean }[];
+    const stMap = new Map(existingSt.map((s) => [s.id, s.completed]));
+    pc[pluginId].subtasks = descs.map((desc, i) => ({
+      id: String(ids[i] ?? ''),
+      description: String(desc),
+      completed: stCompleted.length > 0 ? !!stCompleted[i] : (stMap.get(String(ids[i] ?? '')) ?? false),
+    }));
+
+    // Criteria
+    const existingCr = (pc[pluginId].criteria || []) as { id: string; description: string; completed: boolean }[];
+    const crMap = new Map(existingCr.map((c) => [c.id, c.completed]));
+    pc[pluginId].criteria = cDescs.map((desc, i) => ({
+      id: String(cIds[i] ?? ''),
+      description: String(desc),
+      completed: crCompleted.length > 0 ? !!crCompleted[i] : (crMap.get(String(cIds[i] ?? '')) ?? false),
+    }));
+
+    q.updatePluginContext.run(JSON.stringify(pc), taskId);
+    return rowToTask(q.getTask.get(taskId) as Record<string, unknown>);
   });
 
   // Settings

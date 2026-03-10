@@ -25,6 +25,7 @@ export interface TaskRow {
   pm_work_item_id: string | null;
   pm_work_item_url: string | null;
   worktree_path: string | null;
+  plugin_context: string;
 }
 
 export interface KnowledgeRow {

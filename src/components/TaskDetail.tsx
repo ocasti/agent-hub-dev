@@ -1,12 +1,13 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { formatTime, formatDateTime } from '../lib/format';
-import type { Task, Project, Log, ActiveAgent, CriterionStatus } from '../lib/types';
+import type { Task, Project, Log, ActiveAgent, CriterionStatus, Subtask, PluginCriterion } from '../lib/types';
 import { CORE_SKILLS } from '../lib/skills';
+import { executePluginOperation, completeSubtask, completeCriterion, refreshSubtasks } from '../lib/ipc';
 import Badge from './ui/Badge';
 import ProgressBar from './ui/ProgressBar';
 import SkillTag from './ui/SkillTag';
-import { IconEdit, IconPlay, IconStop, IconRuler, IconDownload, IconCircleCheck, IconImage, IconRetry, IconChevronDown, IconX } from './ui/Icons';
+import { IconEdit, IconPlay, IconStop, IconRuler, IconDownload, IconCircleCheck, IconImage, IconRetry, IconChevronDown, IconX, IconRefresh } from './ui/Icons';
 
 interface TaskDetailProps {
   task: Task;
@@ -40,7 +41,34 @@ export default function TaskDetail({
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({ spec: true, criteria: true });
   const toggle = (key: string) => setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }));
   const [activityHeight, setActivityHeight] = useState(160);
+  const [refreshingPmData, setRefreshingPmData] = useState(false);
+  const [localSubtasks, setLocalSubtasks] = useState<{ pluginId: string; id: string; description: string; completed: boolean }[] | null>(null);
+  const [localCriteria, setLocalCriteria] = useState<{ pluginId: string; id: string; description: string; completed: boolean }[] | null>(null);
+  const [pmStatus, setPmStatus] = useState<string | null>(null);
+  const [pmUrl, setPmUrl] = useState<string | null>(task.pmWorkItemUrl || null);
   const dragRef = useRef<{ startY: number; startH: number } | null>(null);
+
+  // Fetch PM status when task has a PM work item linked
+  useEffect(() => {
+    if (!task.pmWorkItemId || !project?.pluginPm) return;
+    setPmStatus(null);
+    // Use listMyWork (which returns status_name) and find the item by ID
+    executePluginOperation(project.pluginPm, 'listMyWork', { __raw: 'true' })
+      .then((raw) => {
+        // listMyWork returns an array of work items
+        const items = Array.isArray(raw) ? raw : [];
+        const item = items.find((i: Record<string, unknown>) =>
+          String(i.id) === task.pmWorkItemId
+        ) as Record<string, unknown> | undefined;
+        if (item) {
+          const status = item.status_name || item.statusName || item.status || item.state;
+          if (status) setPmStatus(String(status));
+          const url = item.url || item.link || item.web_url;
+          if (url && !pmUrl) setPmUrl(String(url));
+        }
+      })
+      .catch(() => { /* PM status fetch failed — non-critical */ });
+  }, [task.pmWorkItemId, task.status, project?.pluginPm]);
 
   const onDragStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -101,6 +129,24 @@ export default function TaskDetail({
               </span>
               {task.prNumber && (
                 <span className="text-xs bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 px-2 py-0.5 rounded font-mono">PR #{task.prNumber}</span>
+              )}
+              {task.pmWorkItemId && (
+                pmUrl ? (
+                  <a
+                    href={pmUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-xs bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors"
+                    title="Open in PM tool"
+                  >
+                    <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg>
+                    PM{pmStatus ? `: ${pmStatus}` : ''}
+                  </a>
+                ) : (
+                  <span className="text-xs bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 px-2 py-0.5 rounded">
+                    PM{pmStatus ? `: ${pmStatus}` : ''}
+                  </span>
+                )
               )}
               <Badge status={task.status} />
             </div>
@@ -347,6 +393,201 @@ export default function TaskDetail({
             );
           })()}
         </div>
+
+        {/* PM Criteria & Subtasks (from PM plugins) */}
+        {(() => {
+          // Build criteria list
+          const allCriteria: { pluginId: string; id: string; description: string; completed: boolean }[] = localCriteria || [];
+          if (!localCriteria && task.pluginContext) {
+            for (const [pid, data] of Object.entries(task.pluginContext)) {
+              if (data.criteria) {
+                for (const cr of data.criteria) {
+                  allCriteria.push({ pluginId: pid, ...cr });
+                }
+              }
+            }
+          }
+
+          // Build subtask list
+          const allSubtasks: { pluginId: string; id: string; description: string; completed: boolean }[] = localSubtasks || [];
+          if (!localSubtasks && task.pluginContext) {
+            for (const [pid, data] of Object.entries(task.pluginContext)) {
+              if (data.subtasks) {
+                for (const st of data.subtasks) {
+                  allSubtasks.push({ pluginId: pid, ...st });
+                }
+              }
+            }
+          }
+
+          if (!task.pmWorkItemId && allCriteria.length === 0 && allSubtasks.length === 0) return null;
+
+          const handleRefreshPm = async () => {
+            setRefreshingPmData(true);
+            try {
+              const updated = await refreshSubtasks(task.id);
+              if (updated.pluginContext) {
+                const refreshedSt: typeof allSubtasks = [];
+                const refreshedCr: typeof allCriteria = [];
+                for (const [pid, data] of Object.entries(updated.pluginContext)) {
+                  if (data.subtasks) for (const st of data.subtasks) refreshedSt.push({ pluginId: pid, ...st });
+                  if (data.criteria) for (const cr of data.criteria) refreshedCr.push({ pluginId: pid, ...cr });
+                }
+                setLocalSubtasks(refreshedSt);
+                setLocalCriteria(refreshedCr);
+              }
+            } catch (err) {
+              console.error('Failed to refresh PM data:', err);
+            } finally {
+              setRefreshingPmData(false);
+            }
+          };
+
+          const criteriaDone = allCriteria.filter((c) => c.completed).length;
+          const subtasksDone = allSubtasks.filter((s) => s.completed).length;
+
+          return (
+            <>
+              {/* PM Criteria */}
+              <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-700">
+                <div className="flex items-center gap-1">
+                  <button onClick={() => toggle('pmCriteria')} className="flex items-center gap-1 flex-1 text-left">
+                    <IconChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform ${collapsed.pmCriteria ? '-rotate-90' : ''}`} />
+                    <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider flex items-center gap-2">
+                      {t('detail.pmCriteria', 'PM Criteria')}
+                      {allCriteria.length > 0 && (
+                        <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
+                          criteriaDone === allCriteria.length
+                            ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400'
+                            : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400'
+                        }`}>
+                          {t('detail.subtasksDone', { done: criteriaDone, total: allCriteria.length })}
+                        </span>
+                      )}
+                    </h4>
+                  </button>
+                  {task.pmWorkItemId && (
+                    <button
+                      onClick={handleRefreshPm}
+                      disabled={refreshingPmData}
+                      title={t('detail.refreshSubtasks', 'Refresh from PM')}
+                      className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 disabled:opacity-50"
+                    >
+                      <IconRefresh className={`w-3.5 h-3.5 ${refreshingPmData ? 'animate-spin' : ''}`} />
+                    </button>
+                  )}
+                </div>
+                {!collapsed.pmCriteria && (
+                  allCriteria.length > 0 ? (
+                    <div className="space-y-1.5 mt-2">
+                      {allCriteria.map((cr) => (
+                        <label key={cr.id} className="flex items-center gap-2 cursor-pointer group">
+                          <input
+                            type="checkbox"
+                            checked={cr.completed}
+                            onChange={() => {
+                              const newVal = !cr.completed;
+                              // Optimistic update
+                              setLocalCriteria((prev) => {
+                                const list = prev || allCriteria;
+                                return list.map((c) => c.id === cr.id ? { ...c, completed: newVal } : c);
+                              });
+                              completeCriterion(task.id, cr.pluginId, cr.id, newVal).catch((err) => {
+                                console.error('Failed to toggle criterion:', err);
+                                // Revert on error
+                                setLocalCriteria((prev) => prev && prev.map((c) => c.id === cr.id ? { ...c, completed: !newVal } : c));
+                              });
+                            }}
+                            className="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-indigo-600 focus:ring-indigo-500 dark:bg-gray-700"
+                          />
+                          <span className={`text-sm ${cr.completed ? 'line-through text-gray-400 dark:text-gray-500' : 'text-gray-700 dark:text-gray-300'}`}>
+                            {cr.description}
+                          </span>
+                          <span className="text-[10px] text-gray-300 dark:text-gray-600 font-mono ml-auto opacity-0 group-hover:opacity-100 transition-opacity">
+                            {cr.id}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mt-2 italic">
+                      {t('detail.noPmCriteria', 'No PM criteria. Click refresh to fetch.')}
+                    </p>
+                  )
+                )}
+              </div>
+
+              {/* PM Subtasks */}
+              <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-700">
+                <div className="flex items-center gap-1">
+                  <button onClick={() => toggle('subtasks')} className="flex items-center gap-1 flex-1 text-left">
+                    <IconChevronDown className={`w-3.5 h-3.5 text-gray-400 transition-transform ${collapsed.subtasks ? '-rotate-90' : ''}`} />
+                    <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider flex items-center gap-2">
+                      {t('detail.subtasks')}
+                      {allSubtasks.length > 0 && (
+                        <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
+                          subtasksDone === allSubtasks.length
+                            ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400'
+                            : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400'
+                        }`}>
+                          {t('detail.subtasksDone', { done: subtasksDone, total: allSubtasks.length })}
+                        </span>
+                      )}
+                    </h4>
+                  </button>
+                  {task.pmWorkItemId && (
+                    <button
+                      onClick={handleRefreshPm}
+                      disabled={refreshingPmData}
+                      title={t('detail.refreshSubtasks', 'Refresh from PM')}
+                      className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 disabled:opacity-50"
+                    >
+                      <IconRefresh className={`w-3.5 h-3.5 ${refreshingPmData ? 'animate-spin' : ''}`} />
+                    </button>
+                  )}
+                </div>
+                {!collapsed.subtasks && (
+                  allSubtasks.length > 0 ? (
+                    <div className="space-y-1.5 mt-2">
+                      {allSubtasks.map((st) => (
+                        <label key={st.id} className="flex items-center gap-2 cursor-pointer group">
+                          <input
+                            type="checkbox"
+                            checked={st.completed}
+                            onChange={() => {
+                              const newVal = !st.completed;
+                              // Optimistic update
+                              setLocalSubtasks((prev) => {
+                                const list = prev || allSubtasks;
+                                return list.map((s) => s.id === st.id ? { ...s, completed: newVal } : s);
+                              });
+                              completeSubtask(task.id, st.pluginId, st.id, newVal).catch((err) => {
+                                console.error('Failed to toggle subtask:', err);
+                                // Revert on error
+                                setLocalSubtasks((prev) => prev && prev.map((s) => s.id === st.id ? { ...s, completed: !newVal } : s));
+                              });
+                            }}
+                            className="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-indigo-600 focus:ring-indigo-500 dark:bg-gray-700"
+                          />
+                          <span className={`text-sm ${st.completed ? 'line-through text-gray-400 dark:text-gray-500' : 'text-gray-700 dark:text-gray-300'}`}>
+                            {st.description}
+                          </span>
+                          <span className="text-[10px] text-gray-300 dark:text-gray-600 font-mono ml-auto opacity-0 group-hover:opacity-100 transition-opacity">
+                            {st.id}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mt-2 italic">
+                      {t('detail.noSubtasks', 'No subtasks yet. Click refresh to fetch from PM.')}
+                    </p>
+                  )
+                )}
+              </div>
+            </>
+          );
+        })()}
 
         {/* Images */}
         {task.images?.length > 0 && (
