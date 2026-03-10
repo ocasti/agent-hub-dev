@@ -79,6 +79,14 @@ export interface PluginHook {
   priority?: number;                // lower = runs first (default 100)
   blocking?: boolean;               // wait for completion (default false)
   condition?: string;               // optional condition expression
+  // Inline operation fields (PM plugin style: tool/server/args on hook itself)
+  tool?: string;
+  server?: string;
+  args?: Record<string, string>;
+  // Special fields
+  action?: string;                  // e.g. "update_status"
+  statusMap?: string;               // e.g. "in_review", "done" — resolved via plugin statusMap
+  iterate?: string;                 // e.g. "subtasks", "criteria" — execute once per item
 }
 
 export interface PluginPhase {
@@ -176,6 +184,7 @@ export interface HookContext {
   specSuggestions?: string[];  // for spec_needs_input
   planSummary?: string;        // for plan_ready
   commentCount?: number;       // for pr_changes_requested
+  pmWorkItemId?: string;       // PM work item ID (for PM plugin hooks)
   pluginConfig?: Record<string, string>;
   extra?: Record<string, unknown>;
 }

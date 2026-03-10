@@ -1,11 +1,17 @@
 import type Database from 'better-sqlite3';
 import type { HookContext, InstalledPlugin, PluginHook, PluginOperation, ResolvedPhase } from './types';
 import { loadAllPlugins } from './loader';
+import { callMcpHttpTool, getMcpServerConfig } from './mcp-client';
 
 // ── Template Resolution ─────────────────────────────────────────────────────────
 
 export function resolveTemplate(template: string, vars: Record<string, string>): string {
-  return template.replace(/\{(\w+)\}/g, (_, key) => vars[key] ?? '');
+  // Support both {key} and {config.key} patterns
+  return template.replace(/\{(\w+(?:\.\w+)?)\}/g, (_, key) => {
+    const configMatch = key.match(/^config\.(.+)$/);
+    if (configMatch) return vars[configMatch[1]] ?? '';
+    return vars[key] ?? '';
+  });
 }
 
 // ── Hook Execution ──────────────────────────────────────────────────────────────
@@ -19,36 +25,93 @@ export async function fireHook(
   const hooks: { hook: PluginHook; plugin: InstalledPlugin }[] = [];
 
   for (const plugin of plugins) {
-    if (!plugin.workflow?.hooks) continue;
-    for (const hook of plugin.workflow.hooks) {
+    const normalizedHooks = getNormalizedHooks(plugin);
+    for (const hook of normalizedHooks) {
       if (hook.event === event) {
         hooks.push({ hook, plugin });
       }
     }
   }
 
+  if (hooks.length === 0) return;
+
   // Sort by priority (lower = first)
   hooks.sort((a, b) => (a.hook.priority ?? 100) - (b.hook.priority ?? 100));
 
   for (const { hook, plugin } of hooks) {
     try {
-      const operation = plugin.workflow?.operations?.[hook.operation];
-      if (!operation) continue;
+      const vars = buildVarsFromContext(context, plugin.config, db);
 
-      const vars = buildVarsFromContext(context, plugin.config);
+      // Resolve the operation: inline (tool/server/args on hook) or reference
+      const operation = resolveHookOperation(hook, plugin);
+      if (!operation) {
+        console.warn(`[plugins] Hook ${event}: no operation found for "${hook.operation || '(inline)'}"`);
+        continue;
+      }
+
+      const exec = () => executeHookOperation(event, hook, operation, vars, plugin);
 
       if (hook.blocking) {
-        await executeOperation(operation, vars);
+        await exec();
       } else {
-        // Fire and forget
-        executeOperation(operation, vars).catch((err) => {
-          console.error(`[plugins] Non-blocking hook ${event}/${hook.operation} failed:`, err);
+        exec().catch((err) => {
+          console.error(`[plugins] Non-blocking hook ${event} failed:`, err.message || err);
         });
       }
     } catch (err) {
-      console.error(`[plugins] Hook ${event}/${hook.operation} error:`, err);
+      console.error(`[plugins] Hook ${event} error:`, (err as Error).message || err);
     }
   }
+}
+
+/**
+ * Execute a single hook operation, handling iterate and update_status actions.
+ */
+async function executeHookOperation(
+  event: string,
+  hook: PluginHook,
+  operation: PluginOperation,
+  vars: Record<string, string>,
+  plugin: InstalledPlugin
+): Promise<void> {
+  // Handle action: "update_status" — resolve statusMap to a status ID
+  if (hook.action === 'update_status' && hook.statusMap) {
+    const statusMappings = getStatusMappings(plugin);
+    const statusTemplate = statusMappings[hook.statusMap];
+    if (!statusTemplate) {
+      console.warn(`[plugins] Hook ${event}: statusMap "${hook.statusMap}" not found in plugin statusMap`);
+      return;
+    }
+    const statusId = resolveTemplate(statusTemplate, vars);
+    if (!statusId) {
+      console.warn(`[plugins] Hook ${event}: status ID resolved to empty for "${hook.statusMap}"`);
+      return;
+    }
+
+    // Use the updateStatus operation with the resolved status ID
+    const updateOp = getTopLevelOperations(plugin)['updateStatus'];
+    if (!updateOp) {
+      console.warn(`[plugins] Hook ${event}: "updateStatus" operation not found for status action`);
+      return;
+    }
+    const statusVars = { ...vars, statusId };
+    await executeOperation(updateOp, statusVars);
+    console.log(`[plugins] Hook ${event}: status updated to "${hook.statusMap}" (id: ${statusId})`);
+    return;
+  }
+
+  // Handle iterate: call operation once per item
+  if (hook.iterate) {
+    // iterate values should be passed in context.extra
+    // For now, just execute once (iterate requires richer context from orchestrator)
+    console.log(`[plugins] Hook ${event}: iterate "${hook.iterate}" — executing single call (batch not yet wired)`);
+    await executeOperation(operation, vars);
+    return;
+  }
+
+  // Standard single execution
+  await executeOperation(operation, vars);
+  console.log(`[plugins] Hook ${event}: executed ${operation.tool} on ${operation.server}`);
 }
 
 // ── Enrichment ──────────────────────────────────────────────────────────────────
@@ -62,21 +125,21 @@ export async function getEnrichmentData(
   const result: Record<string, unknown> = {};
 
   for (const plugin of plugins) {
-    if (!plugin.workflow?.enrichment) continue;
-    for (const enrichment of plugin.workflow.enrichment) {
+    const enrichments = getNormalizedEnrichments(plugin);
+    for (const enrichment of enrichments) {
       if (enrichment.event !== event) continue;
 
-      const operation = plugin.workflow.operations?.[enrichment.operation];
+      const operation = resolveEnrichmentOperation(enrichment, plugin);
       if (!operation) continue;
 
       try {
-        const vars = buildVarsFromContext(context, plugin.config);
+        const vars = buildVarsFromContext(context, plugin.config, db);
         const data = await executeOperation(operation, vars);
         if (data) {
           result[`${plugin.id}:${enrichment.target}`] = data;
         }
       } catch (err) {
-        console.error(`[plugins] Enrichment ${event}/${enrichment.operation} error:`, err);
+        console.error(`[plugins] Enrichment ${event} error:`, (err as Error).message || err);
       }
     }
   }
@@ -96,15 +159,23 @@ export async function executeOperation(
     resolvedArgs[key] = resolveTemplate(value, vars);
   }
 
-  // Execute via Claude CLI MCP tool call
-  // For now, log the intended call. Full MCP execution requires the CLI subprocess.
-  console.log(`[plugins] Execute operation: ${operation.tool} on ${operation.server}`, resolvedArgs);
+  // Skip if required args resolved to empty (e.g. no pmWorkItemId)
+  const hasEmptyRequired = Object.values(resolvedArgs).some((v) => v === '');
+  if (hasEmptyRequired) {
+    const emptyKeys = Object.entries(resolvedArgs).filter(([, v]) => v === '').map(([k]) => k);
+    console.warn(`[plugins] Skipping ${operation.tool}: empty args [${emptyKeys.join(', ')}]`);
+    return null;
+  }
 
-  // TODO: Implement actual MCP tool execution via Claude CLI
-  // const prompt = `Call the MCP tool "${operation.tool}" with these arguments: ${JSON.stringify(resolvedArgs)}. Return ONLY the raw JSON result.`;
-  // const result = await runClaudePhase(cwd, 'haiku', prompt, ...);
-
-  return { tool: operation.tool, args: resolvedArgs, status: 'pending' };
+  try {
+    const config = getMcpServerConfig(operation.server);
+    const result = await callMcpHttpTool(config, operation.tool, resolvedArgs);
+    console.log(`[plugins] MCP call OK: ${operation.tool} on ${operation.server}`);
+    return result;
+  } catch (err) {
+    console.error(`[plugins] MCP call failed: ${operation.tool} on ${operation.server}:`, (err as Error).message);
+    throw err;
+  }
 }
 
 // ── Phase Resolution ────────────────────────────────────────────────────────────
@@ -125,8 +196,8 @@ export function resolveWorkflowPhases(
 
   let nextPhaseNum = 4;
   for (const plugin of plugins) {
-    if (!plugin.workflow?.phases) continue;
-    for (const pluginPhase of plugin.workflow.phases) {
+    const pluginPhases = getNormalizedPhases(plugin);
+    for (const pluginPhase of pluginPhases) {
       phases.push({
         id: pluginPhase.id,
         label: pluginPhase.label,
@@ -196,12 +267,169 @@ export function checkCapabilityConflicts(
   return conflicts;
 }
 
+// ── Manifest Normalization ──────────────────────────────────────────────────────
+// manifest.json has two layers:
+//   Top-level: provides, operations, statusMap
+//   Nested: workflow.hooks, workflow.enrichment, workflow.actions, workflow.phases
+// The loader reads the whole file as PluginWorkflow, so we need to access both layers.
+
+type RawManifest = Record<string, unknown>;
+
+/** Get top-level operations (always at root of manifest.json) */
+function getTopLevelOperations(plugin: InstalledPlugin): Record<string, PluginOperation> {
+  const raw = plugin.workflow as unknown as RawManifest;
+  return (raw?.operations as Record<string, PluginOperation>) || {};
+}
+
+/** Get statusMap from root of manifest.json */
+function getStatusMappings(plugin: InstalledPlugin): Record<string, string> {
+  const raw = plugin.workflow as unknown as RawManifest;
+  return (raw?.statusMap as Record<string, string>) || (raw?.statusMappings as Record<string, string>) || {};
+}
+
+/** Get nested workflow object */
+function getNestedWorkflow(plugin: InstalledPlugin): RawManifest {
+  const raw = plugin.workflow as unknown as RawManifest;
+  return (raw?.workflow as RawManifest) || {};
+}
+
+/**
+ * Normalize hooks from manifest.json.
+ * Supports both formats:
+ *   Array: [{ event, operation, priority }]  (GitHub plugin style)
+ *   Object: { "on:event": { tool, server, args, priority } }  (PM plugin style)
+ */
+function getNormalizedHooks(plugin: InstalledPlugin): PluginHook[] {
+  const nested = getNestedWorkflow(plugin);
+  const rawHooks = nested.hooks;
+  if (!rawHooks) return [];
+
+  // Array format (GitHub plugin)
+  if (Array.isArray(rawHooks)) {
+    return rawHooks as PluginHook[];
+  }
+
+  // Object format (PM plugin) — convert to array
+  const hooks: PluginHook[] = [];
+  for (const [event, hookDef] of Object.entries(rawHooks as Record<string, RawManifest>)) {
+    hooks.push({
+      event,
+      operation: (hookDef.operation as string) || '',
+      priority: (hookDef.priority as number) || 100,
+      blocking: (hookDef.blocking as boolean) || false,
+      // Inline operation fields (PM style)
+      tool: hookDef.tool as string | undefined,
+      server: hookDef.server as string | undefined,
+      args: hookDef.args as Record<string, string> | undefined,
+      // Special fields
+      action: hookDef.action as string | undefined,
+      statusMap: hookDef.statusMap as string | undefined,
+      iterate: hookDef.iterate as string | undefined,
+    } as PluginHook);
+  }
+  return hooks;
+}
+
+/** Normalize enrichments */
+function getNormalizedEnrichments(plugin: InstalledPlugin): { event: string; operation?: string; target: string; tool?: string; server?: string; args?: Record<string, string>; inject?: Record<string, string> }[] {
+  const nested = getNestedWorkflow(plugin);
+  const rawEnrichment = nested.enrichment;
+  if (!rawEnrichment) return [];
+
+  if (Array.isArray(rawEnrichment)) {
+    return rawEnrichment;
+  }
+
+  // Object format
+  const enrichments: { event: string; operation?: string; target: string; tool?: string; server?: string; args?: Record<string, string>; inject?: Record<string, string> }[] = [];
+  for (const [event, def] of Object.entries(rawEnrichment as Record<string, RawManifest>)) {
+    enrichments.push({
+      event,
+      operation: def.operation as string | undefined,
+      target: (def.target as string) || 'prompt',
+      tool: def.tool as string | undefined,
+      server: def.server as string | undefined,
+      args: def.args as Record<string, string> | undefined,
+      inject: def.inject as Record<string, string> | undefined,
+    });
+  }
+  return enrichments;
+}
+
+/** Normalize phases (always in array format under workflow) */
+function getNormalizedPhases(plugin: InstalledPlugin): { id: string; label: string; capability: string; icon?: string }[] {
+  const nested = getNestedWorkflow(plugin);
+  const phases = nested.phases;
+  if (!phases || !Array.isArray(phases)) return [];
+  return phases as { id: string; label: string; capability: string; icon?: string }[];
+}
+
+// ── Hook Resolution ─────────────────────────────────────────────────────────────
+
+/**
+ * Resolve a hook to its operation.
+ * Hooks can reference an operation by name, or have inline tool/server/args.
+ */
+function resolveHookOperation(hook: PluginHook, plugin: InstalledPlugin): PluginOperation | null {
+  // Inline operation (PM plugin style: tool/server/args on hook itself)
+  const inlineHook = hook as PluginHook & { tool?: string; server?: string; args?: Record<string, string> };
+  if (inlineHook.tool && inlineHook.server) {
+    return {
+      tool: inlineHook.tool,
+      server: inlineHook.server,
+      args: inlineHook.args || {},
+    };
+  }
+
+  // Reference to named operation
+  if (hook.operation) {
+    const ops = getTopLevelOperations(plugin);
+    return ops[hook.operation] || null;
+  }
+
+  // action: "update_status" hooks are handled separately in executeHookOperation
+  if ((hook as PluginHook & { action?: string }).action === 'update_status') {
+    return { tool: '__update_status', server: '__internal', args: {} };
+  }
+
+  return null;
+}
+
+/** Resolve an enrichment to its operation */
+function resolveEnrichmentOperation(
+  enrichment: { operation?: string; tool?: string; server?: string; args?: Record<string, string> },
+  plugin: InstalledPlugin
+): PluginOperation | null {
+  if (enrichment.tool && enrichment.server) {
+    return {
+      tool: enrichment.tool,
+      server: enrichment.server,
+      args: enrichment.args || {},
+    };
+  }
+  if (enrichment.operation) {
+    const ops = getTopLevelOperations(plugin);
+    return ops[enrichment.operation] || null;
+  }
+  return null;
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────────
 
 function buildVarsFromContext(
   context: HookContext,
-  config: Record<string, string>
+  config: Record<string, string>,
+  db?: Database.Database
 ): Record<string, string> {
+  // Get pmWorkItemId from the task if available
+  let pmWorkItemId = context.pmWorkItemId || '';
+  if (!pmWorkItemId && context.taskId && db) {
+    try {
+      const task = db.prepare('SELECT pm_work_item_id FROM tasks WHERE id = ?').get(context.taskId) as { pm_work_item_id: string | null } | undefined;
+      pmWorkItemId = task?.pm_work_item_id || '';
+    } catch { /* ignore */ }
+  }
+
   return {
     ...config,
     taskId: context.taskId || '',
@@ -216,6 +444,7 @@ function buildVarsFromContext(
     error: context.error || '',
     planSummary: context.planSummary || '',
     commentCount: context.commentCount?.toString() || '',
+    pmWorkItemId,
   };
 }
 

@@ -72,6 +72,7 @@ export async function orchestrateSddWorkflow(
       taskDescription: task.description,
       branchName: task.branch_name || undefined,
       prNumber: task.pr_number || undefined,
+      pmWorkItemId: task.pm_work_item_id || undefined,
     };
 
     await fireHook('on:workflow_started', { ...hookCtx, phase: startPhase }, db);

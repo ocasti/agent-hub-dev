@@ -109,6 +109,39 @@ export function registerTaskHandlers(ipcMain: IpcMain, db: Database.Database) {
     // Reset criteria_status when task is re-queued
     if (updates.status === 'queued') {
       q.updateCriteriaStatus.run('[]', id);
+
+      // Close existing PR if task had one (re-queue = full re-execution)
+      const prNumber = existing.pr_number as number | null;
+      const projectPath = existing.project_path as string | undefined;
+      if (prNumber && projectPath) {
+        const taskTitle = (updates.title ?? existing.title) as string;
+        const comment = `Closed by Agent Hub: task "${taskTitle}" was re-queued for re-execution. A new PR will be created.`;
+        execFile('gh', ['pr', 'close', String(prNumber), '--comment', comment], {
+          shell: false,
+          cwd: projectPath,
+          timeout: 15000,
+        }, (err) => {
+          if (err) console.warn(`[tasks] Failed to close PR #${prNumber}:`, err.message);
+          else console.log(`[tasks] Closed PR #${prNumber} (task re-queued)`);
+        });
+        // Clear PR number so the agent creates a fresh one
+        q.updateTask.run(
+          updates.title ?? existing.title,
+          updates.description ?? existing.description,
+          updates.acceptanceCriteria ? JSON.stringify(updates.acceptanceCriteria) : (existing.acceptance_criteria as string),
+          updates.images ? JSON.stringify(updates.images) : (existing.images as string),
+          updates.model ?? existing.model,
+          'queued',
+          null, // pr_number cleared
+          0,    // review_cycle reset
+          updates.specSuggestions ? JSON.stringify(updates.specSuggestions) : (existing.spec_suggestions as string),
+          null, // plan_summary cleared
+          existing.branch_name, // keep branch for reuse
+          updates.pmWorkItemId !== undefined ? updates.pmWorkItemId : (existing.pm_work_item_id as string | null),
+          updates.pmWorkItemUrl !== undefined ? updates.pmWorkItemUrl : (existing.pm_work_item_url as string | null),
+          id
+        );
+      }
     }
 
     return rowToTask(q.getTask.get(id) as Record<string, unknown>);

@@ -62,6 +62,7 @@ export async function runFetchAndFix(
       taskDescription: task.description,
       branchName: task.branch_name || undefined,
       prNumber: task.pr_number || undefined,
+      pmWorkItemId: task.pm_work_item_id || undefined,
     };
 
     sendLog(q, getWindow, taskId, projectName, '── Fetch & Fix: Reading PR comments ──', 'info');
