@@ -256,6 +256,9 @@ export interface Settings {
   updateAutoCheck?: boolean;
   updateLastCheck?: string;
   updateSkippedVersion?: string;
+  // Task filters
+  tasksFilterProjects: string[];
+  tasksFilterStatuses: string[];
 }
 
 export type NotificationKey =

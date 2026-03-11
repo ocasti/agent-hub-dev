@@ -8,12 +8,11 @@ import { parsePhaseOutput, saveKnowledgeEntries } from './output-parser';
 import { buildSingleThreadPrompt } from './prompt-builder';
 import { commitWipIfDirty, getDefaultBranch } from './git-ops';
 import { removeWorktree } from './worktree';
-import { fetchUnresolvedPrFeedback, postThreadReplies, resolveReviewThreads, minimizeOldReviews, cleanupOldPRComments } from './github-api';
 import { runNativeTests, detectTestCommand } from './test-runner';
-import { execGraphQL } from './claude-cli';
 import { fireHook } from '../plugins/engine';
 import type { HookContext } from '../plugins/types';
 import { resolveEnvVars, getProjectAdapter } from './adapters/registry';
+import type { CodeHostingAdapter } from './adapters/types';
 import { sendNotification } from '../notifications';
 import type { CICheckResult } from './types';
 
@@ -41,8 +40,10 @@ export async function runFetchAndFix(
     const criteria = JSON.parse(task.acceptance_criteria || '[]') as string[];
     const knowledge = (q.getProjectKnowledge.all(task.project_id) || []) as KnowledgeRow[];
 
-    // Resolve code hosting env vars for all subprocess calls
+    // Resolve code hosting env vars and adapter for all subprocess calls
     const extraEnv = resolveEnvVars(task.project_id, db);
+    const adapter = getProjectAdapter(task.project_id, db);
+    if (!adapter) throw new Error('No code hosting adapter configured for this project');
 
     // Check per-project limit
     const { getMaxParallelPerProject } = await import('../license');
@@ -119,14 +120,12 @@ export async function runFetchAndFix(
     } catch { /* ignore — baseline stays 0 */ }
 
     // Fetch PR feedback AND CI status in parallel
-    const adapter = getProjectAdapter(task.project_id, db);
+    const env = extraEnv || {};
     const [feedback, ciResult] = await Promise.all([
-      fetchUnresolvedPrFeedback(
-        projectPath, task.pr_number, taskId, projectName, q, getWindow, extraEnv
+      adapter.fetchFeedbackFull(
+        { projectPath, prNumber: task.pr_number }, env, q, getWindow, taskId, projectName
       ),
-      adapter
-        ? adapter.fetchCIStatus({ projectPath, prNumber: task.pr_number }, extraEnv || {})
-        : Promise.resolve({ status: 'unknown', summary: 'No code hosting adapter' } as CICheckResult),
+      adapter.fetchCIStatus({ projectPath, prNumber: task.pr_number }, env),
     ]);
 
     // ── Handle CI status ──────────────────────────────────────────────────
@@ -241,16 +240,17 @@ export async function runFetchAndFix(
               // Close all open threads — re-fetch after force push since old IDs are invalidated
               const prRollbackMsg = `Automatically reverted cycle ${task.review_cycle}. Reason: ${rollbackReason} Code has been rolled back to pre-fix state. These comments no longer apply to the current code.`;
               try {
-                const repoJson = await execFileAsync('gh', ['repo', 'view', '--json', 'owner,name'], projectPath, 30000, false, extraEnv);
-                const repoInfo = JSON.parse(repoJson.trim()) as { owner: { login: string }; name: string };
-                const freshQuery = `query($owner: String!, $name: String!, $pr: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $pr) { reviewThreads(first: 100) { nodes { id isResolved } } } } }`;
-                const freshOutput = await execGraphQL(freshQuery, projectPath, 10000, { owner: repoInfo.owner.login, name: repoInfo.name, pr: task.pr_number as number }, extraEnv);
-                const freshData = JSON.parse(freshOutput) as { data: { repository: { pullRequest: { reviewThreads: { nodes: { id: string; isResolved: boolean }[] } } } } };
-                const freshUnresolved = freshData.data.repository.pullRequest.reviewThreads.nodes.filter((t) => !t.isResolved);
-                const freshIds = freshUnresolved.map((t) => t.id);
+                const freshFeedback = await adapter.fetchFeedbackFull(
+                  { projectPath, prNumber: task.pr_number as number }, env, q, getWindow, taskId, projectName
+                );
+                const freshIds = freshFeedback.threads.map((t) => t.id).filter(Boolean);
                 if (freshIds.length > 0) {
-                  await postThreadReplies(projectPath, [{ threadId: freshIds[0], body: prRollbackMsg }], taskId, projectName, q, getWindow, extraEnv);
-                  await resolveReviewThreads(projectPath, freshIds, taskId, projectName, q, getWindow, extraEnv);
+                  await adapter.postRepliesFull(
+                    { projectPath, replies: [{ threadId: freshIds[0], body: prRollbackMsg }] }, env, q, getWindow, taskId, projectName
+                  );
+                  await adapter.resolveThreadsFull(
+                    { projectPath, threadIds: freshIds }, env, q, getWindow, taskId, projectName
+                  );
                   sendLog(q, getWindow, taskId, projectName, `Closed ${freshIds.length} review threads (no longer applicable after rollback).`, 'ok');
                 }
               } catch (threadErr) {
@@ -258,7 +258,9 @@ export async function runFetchAndFix(
               }
 
               // Minimize old review comments as resolved
-              await minimizeOldReviews(projectPath, task.pr_number as number, taskId, projectName, q, getWindow, extraEnv);
+              await adapter.minimizeOldCommentsFull(
+                { projectPath, prNumber: task.pr_number as number, beforeReviewCycle: task.review_cycle }, env, q, getWindow, taskId, projectName
+              );
 
               const revertedCycle = Math.max(0, task.review_cycle - 1);
               q.updateTask.run(
@@ -740,12 +742,16 @@ Fix the test failures and ensure all tests pass.`;
     // ── Post replies and resolve threads (deferred until user approved) ──
     if (deferredReplies.length > 0) {
       sendLog(q, getWindow, taskId, projectName, `Posting ${deferredReplies.length} reply(s) on PR threads...`, 'info');
-      await postThreadReplies(projectPath, deferredReplies, taskId, projectName, q, getWindow, extraEnv);
+      await adapter.postRepliesFull(
+        { projectPath, replies: deferredReplies }, env, q, getWindow, taskId, projectName
+      );
     }
     if (deferredResolveIds.length > 0) {
-      sendLog(q, getWindow, taskId, projectName, `Resolving ${deferredResolveIds.length} thread(s) on GitHub...`, 'info');
+      sendLog(q, getWindow, taskId, projectName, `Resolving ${deferredResolveIds.length} thread(s) on ${adapter.name}...`, 'info');
       const uniqueIds = [...new Set(deferredResolveIds)];
-      await resolveReviewThreads(projectPath, uniqueIds, taskId, projectName, q, getWindow, extraEnv);
+      await adapter.resolveThreadsFull(
+        { projectPath, threadIds: uniqueIds }, env, q, getWindow, taskId, projectName
+      );
     }
 
     // Squash all per-thread commits into one clean commit, then push
@@ -768,8 +774,12 @@ Fix the test failures and ensure all tests pass.`;
     });
 
     // Minimize current cycle reviews + delete old cycle reviews
-    await minimizeOldReviews(projectPath, task.pr_number as number, taskId, projectName, q, getWindow, extraEnv);
-    await cleanupOldPRComments(projectPath, task.pr_number as number, taskId, projectName, q, getWindow, 2, extraEnv);
+    await adapter.minimizeOldCommentsFull(
+      { projectPath, prNumber: task.pr_number as number, beforeReviewCycle: newCycleNum }, env, q, getWindow, taskId, projectName
+    );
+    await adapter.cleanupOldComments(
+      { projectPath, prNumber: task.pr_number as number, keepCycles: 2 }, env, q, getWindow, taskId, projectName
+    );
 
     // Increment review cycle
     q.updateTask.run(
@@ -816,8 +826,11 @@ export async function runFetchAndFixPushOnly(
     const projectName = task.project_name;
     const model = task.model;
 
-    // Resolve code hosting env vars for subprocess calls
+    // Resolve code hosting env vars and adapter for subprocess calls
     const extraEnv = resolveEnvVars(task.project_id, db);
+    const adapter = getProjectAdapter(task.project_id, db);
+    if (!adapter) throw new Error('No code hosting adapter configured for this project');
+    const env = extraEnv || {};
 
     // Resolve all unresolved threads before pushing (deferred data was lost)
     sendPhaseUpdate(getWindow, {
@@ -825,11 +838,15 @@ export async function runFetchAndFixPushOnly(
       subProgress: { current: 1, total: 3, label: 'Threads', step: 'Resolving threads' },
     });
     try {
-      const feedback = await fetchUnresolvedPrFeedback(projectPath, task.pr_number as number, taskId, projectName, q, getWindow, extraEnv);
+      const feedback = await adapter.fetchFeedbackFull(
+        { projectPath, prNumber: task.pr_number as number }, env, q, getWindow, taskId, projectName
+      );
       if (feedback.threads.length > 0) {
         const threadIds = feedback.threads.map(t => t.id);
-        sendLog(q, getWindow, taskId, projectName, `Resolving ${threadIds.length} unresolved thread(s) on GitHub...`, 'info');
-        await resolveReviewThreads(projectPath, threadIds, taskId, projectName, q, getWindow, extraEnv);
+        sendLog(q, getWindow, taskId, projectName, `Resolving ${threadIds.length} unresolved thread(s) on ${adapter.name}...`, 'info');
+        await adapter.resolveThreadsFull(
+          { projectPath, threadIds }, env, q, getWindow, taskId, projectName
+        );
       } else {
         sendLog(q, getWindow, taskId, projectName, 'No unresolved threads to resolve.', 'info');
       }
@@ -860,8 +877,12 @@ export async function runFetchAndFixPushOnly(
       taskId, phase: 5, phaseLabel: 'pr_fixing', status: 'in_progress',
       subProgress: { current: 3, total: 3, label: 'Cleanup', step: 'Minimizing old reviews' },
     });
-    await minimizeOldReviews(projectPath, task.pr_number as number, taskId, projectName, q, getWindow, extraEnv);
-    await cleanupOldPRComments(projectPath, task.pr_number as number, taskId, projectName, q, getWindow, 2, extraEnv);
+    await adapter.minimizeOldCommentsFull(
+      { projectPath, prNumber: task.pr_number as number, beforeReviewCycle: newCycleNum }, env, q, getWindow, taskId, projectName
+    );
+    await adapter.cleanupOldComments(
+      { projectPath, prNumber: task.pr_number as number, keepCycles: 2 }, env, q, getWindow, taskId, projectName
+    );
 
     q.updateTask.run(
       task.title, task.description, task.acceptance_criteria, task.images,

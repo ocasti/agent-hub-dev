@@ -93,6 +93,19 @@ export interface FetchCIStatusOptions {
   prNumber: number;
 }
 
+export interface ClosePROptions {
+  projectPath: string;
+  prNumber: number;
+  comment?: string;
+}
+
+export interface CleanupOldCommentsOptions {
+  projectPath: string;
+  prNumber: number;
+  /** Number of recent review cycles to keep */
+  keepCycles: number;
+}
+
 // ── Adapter Interface ───────────────────────────────────────────────────────────
 
 /**
@@ -176,5 +189,75 @@ export interface CodeHostingAdapter {
     env: CodeHostingEnvVars,
     q: Queries,
     getWindow: GetWindow
+  ): Promise<void>;
+
+  /**
+   * Close/decline a pull request (e.g. when task is re-queued).
+   */
+  closePR(
+    options: ClosePROptions,
+    env: CodeHostingEnvVars
+  ): Promise<void>;
+
+  /**
+   * Clean up old review comments from previous cycles.
+   * Provider-specific: GitHub deletes/minimizes, Bitbucket is a no-op, etc.
+   */
+  cleanupOldComments(
+    options: CleanupOldCommentsOptions,
+    env: CodeHostingEnvVars,
+    q: Queries,
+    getWindow: GetWindow,
+    taskId: string,
+    projectName: string
+  ): Promise<void>;
+
+  /**
+   * Fetch unresolved PR feedback with full logging support.
+   * Used by pr-feedback.ts for the Fetch & Fix flow.
+   */
+  fetchFeedbackFull(
+    options: FetchFeedbackOptions,
+    env: CodeHostingEnvVars,
+    q: Queries,
+    getWindow: GetWindow,
+    taskId: string,
+    projectName: string
+  ): Promise<FetchedPrFeedback>;
+
+  /**
+   * Post reply comments with full logging support.
+   */
+  postRepliesFull(
+    options: PostRepliesOptions,
+    env: CodeHostingEnvVars,
+    q: Queries,
+    getWindow: GetWindow,
+    taskId: string,
+    projectName: string
+  ): Promise<void>;
+
+  /**
+   * Resolve/close review threads with full logging support.
+   */
+  resolveThreadsFull(
+    options: ResolveThreadsOptions,
+    env: CodeHostingEnvVars,
+    q: Queries,
+    getWindow: GetWindow,
+    taskId: string,
+    projectName: string
+  ): Promise<void>;
+
+  /**
+   * Minimize outdated review comments with full logging support.
+   */
+  minimizeOldCommentsFull(
+    options: MinimizeOptions,
+    env: CodeHostingEnvVars,
+    q: Queries,
+    getWindow: GetWindow,
+    taskId: string,
+    projectName: string
   ): Promise<void>;
 }

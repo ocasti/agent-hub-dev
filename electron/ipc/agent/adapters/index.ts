@@ -12,11 +12,13 @@ export type {
   ResolveThreadsOptions,
   MinimizeOptions,
   PushOptions,
+  ClosePROptions,
+  CleanupOldCommentsOptions,
 } from './types';
 
 export {
   getAdapter,
-  registerAdapter,
+  registerAdapterFactory,
   resolveCredentials,
   resolveEnvVars,
   getProjectAdapter,
@@ -24,3 +26,4 @@ export {
 } from './registry';
 
 export { GitHubAdapter } from './github';
+export { BitbucketAdapter } from './bitbucket';

@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.4.0] — 2026-03-11 — Bitbucket Plugin, Jira Plugin & Adapter Decoupling
+
+### Added
+- **Bitbucket code hosting plugin** (Level 2): full Ship + PR Feedback workflow via `bkt` CLI — supports Cloud and Data Center
+- **Jira PM plugin** (Level 1 declarative): issue sync, status transitions, workflow comments, and spec enrichment via `mcp-atlassian` MCP server — supports Cloud and Data Center
+- **Task list multi-select filters**: filter by multiple projects and statuses simultaneously, with persistence across sessions
+- **`closePR` adapter method**: close/decline PRs through the adapter instead of hardcoded `gh` calls
+- **`cleanupOldComments` adapter method**: provider-specific old comment cleanup through the adapter
+- **`*Full` adapter methods**: `fetchFeedbackFull`, `postRepliesFull`, `resolveThreadsFull`, `minimizeOldCommentsFull` with built-in logging
+
+### Changed
+- **PR Feedback fully decoupled**: removed all direct `github-api` imports from `pr-feedback.ts` — everything routes through `CodeHostingAdapter`
+- **Dynamic adapter registry**: adapters are lazy-instantiated and only available when their plugin is installed and enabled (replaced hardcoded map)
+- **Task re-queue PR close**: uses adapter instead of hardcoded `gh pr close`
+
+### Fixed
+- Bundled catalog now stays in sync with generated catalog
+
+---
+
 ## [2.1.0] — 2026-03-10 — Branch Sync & Plugin Enrichment
 
 ### Added

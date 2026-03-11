@@ -5,6 +5,7 @@ import { execFile } from 'child_process';
 import { existsSync, rmSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { createQueries } from '../db/queries';
+import { getProjectAdapter, resolveEnvVars } from './agent/adapters/registry';
 
 interface TaskInput {
   id?: string;
@@ -127,17 +128,19 @@ export function registerTaskHandlers(ipcMain: IpcMain, db: Database.Database) {
       // Close existing PR if task had one (re-queue = full re-execution)
       const prNumber = existing.pr_number as number | null;
       const projectPath = existing.project_path as string | undefined;
-      if (prNumber && projectPath) {
+      const projectId = existing.project_id as string | undefined;
+      if (prNumber && projectPath && projectId) {
         const taskTitle = (updates.title ?? existing.title) as string;
         const comment = `Closed by Agent Hub: task "${taskTitle}" was re-queued for re-execution. A new PR will be created.`;
-        execFile('gh', ['pr', 'close', String(prNumber), '--comment', comment], {
-          shell: false,
-          cwd: projectPath,
-          timeout: 15000,
-        }, (err) => {
-          if (err) console.warn(`[tasks] Failed to close PR #${prNumber}:`, err.message);
-          else console.log(`[tasks] Closed PR #${prNumber} (task re-queued)`);
-        });
+        const prAdapter = getProjectAdapter(projectId, db);
+        const prEnv = resolveEnvVars(projectId, db) || {};
+        if (prAdapter) {
+          prAdapter.closePR({ projectPath, prNumber, comment }, prEnv).catch((err) => {
+            console.warn(`[tasks] Failed to close PR #${prNumber}:`, err.message);
+          }).then(() => {
+            console.log(`[tasks] Closed PR #${prNumber} via ${prAdapter.name} (task re-queued)`);
+          });
+        }
         // Clear PR number so the agent creates a fresh one
         q.updateTask.run(
           updates.title ?? existing.title,
@@ -436,6 +439,9 @@ export function registerTaskHandlers(ipcMain: IpcMain, db: Database.Database) {
       updateAutoCheck: (settings.update_auto_check as string) !== 'false',
       updateLastCheck: (settings.update_last_check as string) || '',
       updateSkippedVersion: (settings.update_skipped_version as string) || '',
+      // Task filters
+      tasksFilterProjects: (() => { try { return JSON.parse((settings.tasks_filter_projects as string) || '[]'); } catch { return []; } })(),
+      tasksFilterStatuses: (() => { try { return JSON.parse((settings.tasks_filter_statuses as string) || '[]'); } catch { return []; } })(),
     };
   });
 
@@ -448,6 +454,7 @@ export function registerTaskHandlers(ipcMain: IpcMain, db: Database.Database) {
     'license_key', 'license_status', 'license_plan', 'license_email', 'license_username',
     'license_cached_at', 'license_limits',
     'update_auto_check', 'update_last_check', 'update_skipped_version',
+    'tasks_filter_projects', 'tasks_filter_statuses',
   ]);
 
   ipcMain.handle('settings:update', (_event, key: string, value: string) => {

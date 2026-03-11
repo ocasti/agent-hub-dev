@@ -1,0 +1,177 @@
+{
+  "provides": ["pm_sync"],
+
+  "operations": {
+    "fetch": {
+      "tool": "jira_get_issue",
+      "server": "mcp-atlassian",
+      "args": { "issue_key": "{pmWorkItemId}" },
+      "fieldMap": {
+        "id": "$.key",
+        "title": "$.fields.summary",
+        "description": "$.fields.description",
+        "criteria": "$.fields.description",
+        "status": "$.fields.status.name",
+        "assignee": "$.fields.assignee.displayName",
+        "priority": "$.fields.priority.name",
+        "issueType": "$.fields.issuetype.name",
+        "epicKey": "$.fields.epic.key",
+        "projectKey": "$.fields.project.key"
+      },
+      "description": "Fetch full issue details from Jira"
+    },
+    "listMyWork": {
+      "tool": "jira_search",
+      "server": "mcp-atlassian",
+      "args": { "jql": "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC", "limit": "50" },
+      "fieldMap": {
+        "id": "$.key",
+        "title": "$.fields.summary",
+        "description": "$.fields.description",
+        "status": "$.fields.status.name",
+        "project": "$.fields.project.name"
+      },
+      "description": "List all Jira issues assigned to me"
+    },
+    "createSubtask": {
+      "tool": "jira_create_issue",
+      "server": "mcp-atlassian",
+      "args": {
+        "project_key": "{config.projectKey}",
+        "issue_type": "{config.issueType}",
+        "summary": "{subtask}",
+        "description": "Dev subtask for {pmWorkItemId}: {subtask}",
+        "additional_fields": "{\"parent\":{\"key\":\"{pmWorkItemId}\"}}"
+      },
+      "description": "Create a subtask in Jira from a plan step"
+    },
+    "updateStatus": {
+      "tool": "jira_transition_issue",
+      "server": "mcp-atlassian",
+      "args": { "issue_key": "{pmWorkItemId}", "transition_name": "{statusName}" },
+      "description": "Transition a Jira issue to a new status"
+    },
+    "addComment": {
+      "tool": "jira_add_comment",
+      "server": "mcp-atlassian",
+      "args": { "issue_key": "{pmWorkItemId}", "body": "{text}" },
+      "description": "Add a comment to a Jira issue"
+    }
+  },
+
+  "statusMap": {
+    "in_progress": "{config.statusInProgress}",
+    "in_review": "{config.statusInReview}",
+    "done": "{config.statusDone}"
+  },
+
+  "workflow": {
+    "hooks": {
+      "on:workflow_started": [
+        {
+          "action": "update_status",
+          "statusMap": "in_progress",
+          "priority": 15,
+          "blocking": false,
+          "description": "Transition Jira issue to In Progress when workflow starts"
+        },
+        {
+          "tool": "jira_add_comment",
+          "server": "mcp-atlassian",
+          "args": { "issue_key": "{pmWorkItemId}", "body": "Agent Hub workflow started for this issue." },
+          "priority": 20,
+          "blocking": false,
+          "description": "Post comment to Jira indicating agent workflow has started"
+        }
+      ],
+      "on:plan_approved": {
+        "tool": "jira_add_comment",
+        "server": "mcp-atlassian",
+        "args": { "issue_key": "{pmWorkItemId}", "body": "Plan approved. Subtasks:\n{planSummary}" },
+        "priority": 20,
+        "blocking": false,
+        "description": "Post the approved plan as a comment on the Jira issue"
+      },
+      "on:implement_complete": {
+        "tool": "jira_add_comment",
+        "server": "mcp-atlassian",
+        "args": { "issue_key": "{pmWorkItemId}", "body": "Development complete for: {taskTitle}. Moving to Quality Gate (automated code review)." },
+        "priority": 25,
+        "blocking": false,
+        "description": "Post comment to Jira indicating development is done and QA begins"
+      },
+      "on:quality_pass": {
+        "tool": "jira_add_comment",
+        "server": "mcp-atlassian",
+        "args": { "issue_key": "{pmWorkItemId}", "body": "Quality Gate passed. All tests and code review checks succeeded." },
+        "priority": 20,
+        "blocking": false,
+        "description": "Post comment when quality gate passes"
+      },
+      "on:quality_fail": {
+        "tool": "jira_add_comment",
+        "server": "mcp-atlassian",
+        "args": { "issue_key": "{pmWorkItemId}", "body": "Quality Gate failed: {issueTitle}\n\n{issueDetail}" },
+        "priority": 30,
+        "blocking": false,
+        "description": "Post comment to Jira when quality gate fails"
+      },
+      "on:pr_created": {
+        "action": "update_status",
+        "statusMap": "in_review",
+        "priority": 20,
+        "blocking": false,
+        "description": "Transition Jira issue to In Review when PR is created"
+      },
+      "on:task_complete": {
+        "action": "update_status",
+        "statusMap": "done",
+        "priority": 20,
+        "blocking": false,
+        "description": "Transition Jira issue to Done when task completes"
+      },
+      "on:workflow_failed": {
+        "tool": "jira_add_comment",
+        "server": "mcp-atlassian",
+        "args": { "issue_key": "{pmWorkItemId}", "body": "Agent Hub workflow failed: {error}" },
+        "priority": 10,
+        "blocking": false,
+        "description": "Post comment to Jira when workflow fails"
+      }
+    },
+
+    "enrichment": {
+      "on:before_spec": {
+        "tool": "jira_get_issue",
+        "server": "mcp-atlassian",
+        "args": { "issue_key": "{pmWorkItemId}" },
+        "inject": {
+          "title": "$.fields.summary",
+          "description": "$.fields.description",
+          "priority": "$.fields.priority.name",
+          "issueType": "$.fields.issuetype.name"
+        },
+        "description": "Fetch Jira issue details to enrich the spec review"
+      }
+    },
+
+    "actions": {
+      "sync_jira": {
+        "label": "Sync with Jira",
+        "icon": "refresh-cw",
+        "tool": "jira_get_issue",
+        "server": "mcp-atlassian",
+        "args": { "issue_key": "{pmWorkItemId}" },
+        "description": "Manually refresh issue data from Jira"
+      },
+      "list_my_work": {
+        "label": "My Issues",
+        "icon": "list",
+        "tool": "jira_search",
+        "server": "mcp-atlassian",
+        "args": { "jql": "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC", "limit": "50" },
+        "description": "View all Jira issues assigned to you"
+      }
+    }
+  }
+}

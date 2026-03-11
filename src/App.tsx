@@ -717,6 +717,7 @@ export default function App() {
         onRejectPush={handleRejectPush}
         onRevisePush={handleRevisePush}
         onFixTests={handleFixTests}
+        onUpdateSetting={handleUpdateSetting}
       />
     ),
     projects: <ProjectsView key={viewKey} projects={projects} onSave={handleSaveProject} onDelete={handleDeleteProject} onAnalyzeRepo={handleAnalyzeRepo} analyzingProjectId={analyzingProjectId} licensePlan={licensePlan} multiAgentMode={licenseLimits.multi_agent_mode} />,

@@ -1,0 +1,82 @@
+{
+  "id": "jira",
+  "name": "Jira",
+  "version": "1.0.0",
+  "author": "Agent Hub",
+  "description": "Sync issues, transitions, sprints, and dev tasks with Jira via MCP (mcp-atlassian)",
+  "license": "MIT",
+  "capabilities": ["pm", "enrichment"],
+  "level": 1,
+  "category": "PM Tools",
+  "icon": "jira",
+  "tags": ["pm", "jira", "atlassian", "issues", "agile"],
+  "homepage": "https://github.com/ocasti/agent-hub-dev/blob/main/plugin-registry/plugins/jira/README.md",
+  "requires": {
+    "agentHub": ">=2.0.0",
+    "mcp": "mcp-atlassian"
+  },
+  "taskFields": [
+    {
+      "key": "pmWorkItemId",
+      "label": "Jira Issue",
+      "type": "select",
+      "position": "before:title",
+      "placeholder": "Search Jira issues...",
+      "source": {
+        "operation": "listMyWork"
+      },
+      "onSelect": {
+        "fetch": {
+          "operation": "fetch",
+          "args": { "pmWorkItemId": "$.id" }
+        },
+        "fill": {
+          "title": "$.title",
+          "description": "$.description",
+          "acceptanceCriteria": "$.criteria"
+        }
+      }
+    }
+  ],
+  "configSchema": [
+    {
+      "key": "projectKey",
+      "label": "Jira Project Key",
+      "type": "text",
+      "required": true,
+      "description": "The Jira project key (e.g. PROJ, ENG, MOBILE)"
+    },
+    {
+      "key": "issueType",
+      "label": "Default Issue Type",
+      "type": "text",
+      "required": false,
+      "default": "Task",
+      "description": "Default issue type for created subtasks (e.g. Task, Sub-task, Story)"
+    },
+    {
+      "key": "statusInProgress",
+      "label": "Status: In Progress",
+      "type": "text",
+      "required": true,
+      "default": "In Progress",
+      "description": "Jira transition name to set when work begins"
+    },
+    {
+      "key": "statusInReview",
+      "label": "Status: In Review",
+      "type": "text",
+      "required": false,
+      "default": "In Review",
+      "description": "Jira transition name to set when PR is created"
+    },
+    {
+      "key": "statusDone",
+      "label": "Status: Done",
+      "type": "text",
+      "required": true,
+      "default": "Done",
+      "description": "Jira transition name to set when task completes"
+    }
+  ]
+}

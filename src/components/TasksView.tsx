@@ -4,6 +4,7 @@ import type { Task, Project, Log, ActiveAgent, Settings, LicenseLimits, TaskStat
 import { executePluginOperation } from '../lib/ipc';
 import Badge from './ui/Badge';
 import ProgressBar from './ui/ProgressBar';
+import MultiSelectDropdown from './ui/MultiSelectDropdown';
 import TaskForm from './TaskForm';
 import TaskDetail from './TaskDetail';
 import BulkImportModal, { type ImportItem } from './BulkImportModal';
@@ -35,19 +36,20 @@ interface TasksViewProps {
   onRejectPush?: (task: Task) => void;
   onRevisePush?: (task: Task, prompt: string) => void;
   onFixTests?: (task: Task) => void;
+  onUpdateSetting?: (key: string, value: string) => void;
 }
 
 export default function TasksView({
   tasks, projects, logs, agents, settings, licenseLimits, pendingEditTaskId, pendingDetailTaskId, onClearPendingEdit, onClearPendingDetail,
   onCreateTask, onUpdateTask, onDeleteTask, onStartTask, onStopTask, onContinueSpec, onContinuePlan, onFetchAndFix, onApproveTask,
-  onSyncRemote, onSyncParent, onApprovePush, onRejectPush, onRevisePush, onFixTests,
+  onSyncRemote, onSyncParent, onApprovePush, onRejectPush, onRevisePush, onFixTests, onUpdateSetting,
 }: TasksViewProps) {
   const { t } = useTranslation(['tasks', 'common', 'workflow']);
   const [creating, setCreating] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [editing, setEditing] = useState<Task | null>(null);
-  const [filterProject, setFilterProject] = useState<string>('all');
-  const [filterStatus, setFilterStatus] = useState<string>('all');
+  const [filterProjects, setFilterProjects] = useState<string[]>(settings.tasksFilterProjects || []);
+  const [filterStatuses, setFilterStatuses] = useState<string[]>(settings.tasksFilterStatuses || []);
   const [showBulkImport, setShowBulkImport] = useState(false);
 
   useEffect(() => {
@@ -143,17 +145,27 @@ export default function TasksView({
     return Array.from(statuses).sort();
   }, [tasks]);
 
+  // Persist filter changes to DB
+  function handleFilterProjectsChange(selected: string[]) {
+    setFilterProjects(selected);
+    onUpdateSetting?.('tasks_filter_projects', JSON.stringify(selected));
+  }
+  function handleFilterStatusesChange(selected: string[]) {
+    setFilterStatuses(selected);
+    onUpdateSetting?.('tasks_filter_statuses', JSON.stringify(selected));
+  }
+
   // Filtered tasks
   const filteredTasks = useMemo(() => {
     let result = tasks;
-    if (filterProject !== 'all') {
-      result = result.filter((tk) => tk.projectId === filterProject);
+    if (filterProjects.length > 0) {
+      result = result.filter((tk) => filterProjects.includes(tk.projectId));
     }
-    if (filterStatus !== 'all') {
-      result = result.filter((tk) => tk.status === filterStatus);
+    if (filterStatuses.length > 0) {
+      result = result.filter((tk) => filterStatuses.includes(tk.status));
     }
     return result;
-  }, [tasks, filterProject, filterStatus]);
+  }, [tasks, filterProjects, filterStatuses]);
 
   // Task detail view
   const detailTask = detailId ? tasks.find((t) => t.id === detailId) : null;
@@ -263,29 +275,21 @@ export default function TasksView({
 
       {/* Filters */}
       <div className="flex items-center gap-3">
-        <select
-          value={filterProject}
-          onChange={(e) => setFilterProject(e.target.value)}
-          className="border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-white rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
-        >
-          <option value="all">{t('filter.allProjects', 'All projects')}</option>
-          {projects.map((p) => (
-            <option key={p.id} value={p.id}>{p.name}</option>
-          ))}
-        </select>
-        <select
-          value={filterStatus}
-          onChange={(e) => setFilterStatus(e.target.value)}
-          className="border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-white rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
-        >
-          <option value="all">{t('filter.allStatuses', 'All statuses')}</option>
-          {availableStatuses.map((s) => (
-            <option key={s} value={s}>{t(`workflow:status.${s}`, s)}</option>
-          ))}
-        </select>
-        {(filterProject !== 'all' || filterStatus !== 'all') && (
+        <MultiSelectDropdown
+          options={projects.map((p) => ({ value: p.id, label: p.name }))}
+          selected={filterProjects}
+          onChange={handleFilterProjectsChange}
+          placeholder={t('filter.allProjects', 'All projects')}
+        />
+        <MultiSelectDropdown
+          options={availableStatuses.map((s) => ({ value: s, label: t(`workflow:status.${s}`, s) }))}
+          selected={filterStatuses}
+          onChange={handleFilterStatusesChange}
+          placeholder={t('filter.allStatuses', 'All statuses')}
+        />
+        {(filterProjects.length > 0 || filterStatuses.length > 0) && (
           <button
-            onClick={() => { setFilterProject('all'); setFilterStatus('all'); }}
+            onClick={() => { handleFilterProjectsChange([]); handleFilterStatusesChange([]); }}
             className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
           >
             {t('filter.clear', 'Clear filters')}

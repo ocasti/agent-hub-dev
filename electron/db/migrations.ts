@@ -212,4 +212,12 @@ export const MIGRATIONS = [
       ALTER TABLE tasks ADD COLUMN plugin_context TEXT DEFAULT '{}';
     `,
   },
+  {
+    version: 18,
+    name: '018_task_filters',
+    sql: `
+      INSERT OR IGNORE INTO settings (key, value) VALUES ('tasks_filter_projects', '[]');
+      INSERT OR IGNORE INTO settings (key, value) VALUES ('tasks_filter_statuses', '[]');
+    `,
+  },
 ];

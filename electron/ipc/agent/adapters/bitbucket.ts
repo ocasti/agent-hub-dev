@@ -1,6 +1,6 @@
-// ── GitHub Adapter ──────────────────────────────────────────────────────────────
+// ── Bitbucket Adapter ──────────────────────────────────────────────────────────
 //
-// Implements CodeHostingAdapter for GitHub using `gh` CLI.
+// Implements CodeHostingAdapter for Bitbucket using `bkt` CLI.
 
 import type {
   CodeHostingAdapter,
@@ -24,22 +24,18 @@ import {
   postThreadReplies,
   resolveReviewThreads,
   minimizeOldReviews,
-  cleanupOldPRComments,
-} from '../github-api';
+} from '../bitbucket-api';
 import { sendLog } from '../state';
-import { getDefaultBranch } from '../git-ops';
 
-export class GitHubAdapter implements CodeHostingAdapter {
-  readonly id = 'github';
-  readonly name = 'GitHub';
-  readonly cli = 'gh';
+export class BitbucketAdapter implements CodeHostingAdapter {
+  readonly id = 'bitbucket';
+  readonly name = 'Bitbucket';
+  readonly cli = 'bkt';
 
   buildEnvVars(credentials: CodeHostingCredentials): CodeHostingEnvVars {
     const env: CodeHostingEnvVars = {};
 
-    if (credentials.token) {
-      env.GH_TOKEN = credentials.token;
-    }
+    // bkt manages its own authentication — no token env var needed
     if (credentials.authorName) {
       env.GIT_AUTHOR_NAME = credentials.authorName;
       env.GIT_COMMITTER_NAME = credentials.authorName;
@@ -60,28 +56,38 @@ export class GitHubAdapter implements CodeHostingAdapter {
   ): Promise<CreatePRResult> {
     const { projectPath, branchName, baseBranch, title, body, taskId, projectName } = options;
 
-    sendLog(q, getWindow, taskId, projectName, `GitHub: creating PR from ${branchName} → ${baseBranch}`, 'info');
+    sendLog(q, getWindow, taskId, projectName, `Bitbucket: creating PR from ${branchName} → ${baseBranch}`, 'info');
 
     // Push branch first
     await execFileAsync('git', ['push', '-u', 'origin', branchName], projectPath, 60000, false, env);
-    sendLog(q, getWindow, taskId, projectName, `GitHub: pushed branch ${branchName}`, 'ok');
+    sendLog(q, getWindow, taskId, projectName, `Bitbucket: pushed branch ${branchName}`, 'ok');
 
-    // Create PR via gh CLI
+    // Create PR via bkt CLI
     const prOutput = await execFileAsync(
-      'gh',
-      ['pr', 'create', '--title', title, '--body', body, '--base', baseBranch, '--head', branchName],
+      'bkt',
+      ['pr', 'create', '--title', title, '--body', body, '--source', branchName, '--target', baseBranch, '--json'],
       projectPath,
       30000,
       false,
       env
     );
 
-    // Parse PR URL to extract number
-    const prUrl = prOutput.trim();
-    const prNumberMatch = prUrl.match(/\/pull\/(\d+)/);
-    const prNumber = prNumberMatch ? parseInt(prNumberMatch[1], 10) : 0;
+    // Parse PR output — bkt --json returns JSON with id and links
+    let prNumber = 0;
+    let prUrl = '';
+    try {
+      const prData = JSON.parse(prOutput.trim()) as { id?: number; links?: { html?: { href?: string } }; url?: string };
+      prNumber = prData.id || 0;
+      prUrl = prData.links?.html?.href || prData.url || '';
+    } catch {
+      // Fallback: try to parse PR number from text output
+      const numMatch = prOutput.match(/(?:PR|pull request)\s*#?(\d+)/i);
+      prNumber = numMatch ? parseInt(numMatch[1], 10) : 0;
+      const urlMatch = prOutput.match(/https?:\/\/\S+/);
+      prUrl = urlMatch ? urlMatch[0] : '';
+    }
 
-    sendLog(q, getWindow, taskId, projectName, `GitHub: PR #${prNumber} created — ${prUrl}`, 'ok');
+    sendLog(q, getWindow, taskId, projectName, `Bitbucket: PR #${prNumber} created — ${prUrl}`, 'ok');
 
     return { prNumber, prUrl, branchName };
   }
@@ -90,11 +96,6 @@ export class GitHubAdapter implements CodeHostingAdapter {
     options: FetchFeedbackOptions,
     env: CodeHostingEnvVars
   ): Promise<FetchedPrFeedback> {
-    // Delegate to existing function with extraEnv
-    // Note: taskId/projectName/q/getWindow are not available here — these are used
-    // only for logging. The caller (pr-feedback.ts) handles logging separately.
-    // For now, use a minimal stub — the full integration happens in Batch 4 when
-    // pr-feedback.ts is refactored to use the adapter.
     return fetchUnresolvedPrFeedback(
       options.projectPath,
       options.prNumber,
@@ -153,14 +154,11 @@ export class GitHubAdapter implements CodeHostingAdapter {
     env: CodeHostingEnvVars
   ): Promise<CICheckResult> {
     const { projectPath, prNumber } = options;
-    const MAX_LOG_CHARS = 5000;
 
     try {
-      // gh pr checks --json fields: name, state, link
-      // state values: SUCCESS, FAILURE, PENDING, QUEUED, STARTUP_FAILURE, etc.
       const checksJson = await execFileAsync(
-        'gh',
-        ['pr', 'checks', String(prNumber), '--json', 'name,state,link'],
+        'bkt',
+        ['pr', 'checks', String(prNumber), '--json'],
         projectPath,
         30000,
         false,
@@ -170,16 +168,17 @@ export class GitHubAdapter implements CodeHostingAdapter {
       const checks = JSON.parse(checksJson.trim()) as {
         name: string;
         state: string;
-        link: string;
+        url?: string;
       }[];
 
       if (checks.length === 0) {
         return { status: 'unknown', summary: 'No CI checks configured' };
       }
 
-      const pending = checks.filter((c) => c.state === 'PENDING' || c.state === 'QUEUED');
-      const failed = checks.filter((c) => c.state === 'FAILURE' || c.state === 'STARTUP_FAILURE');
-      const passed = checks.filter((c) => c.state === 'SUCCESS' || c.state === 'NEUTRAL' || c.state === 'SKIPPED');
+      // Bitbucket states: SUCCESSFUL, FAILED, INPROGRESS, STOPPED
+      const pending = checks.filter((c) => c.state === 'INPROGRESS');
+      const failed = checks.filter((c) => c.state === 'FAILED' || c.state === 'STOPPED');
+      const passed = checks.filter((c) => c.state === 'SUCCESSFUL');
 
       if (pending.length > 0) {
         return {
@@ -190,40 +189,16 @@ export class GitHubAdapter implements CodeHostingAdapter {
       }
 
       if (failed.length > 0) {
-        let failureLogs = '';
-        // Extract run IDs from link (pattern: /actions/runs/12345)
-        const runIds = new Set<string>();
-        for (const check of failed) {
-          const match = check.link?.match(/\/actions\/runs\/(\d+)/);
-          if (match) runIds.add(match[1]);
-        }
-
-        for (const runId of runIds) {
-          if (failureLogs.length >= MAX_LOG_CHARS) break;
-          try {
-            const logs = await execFileAsync(
-              'gh',
-              ['run', 'view', runId, '--log-failed'],
-              projectPath,
-              30000,
-              false,
-              env
-            );
-            failureLogs += `\n--- Run ${runId} ---\n${logs}`;
-          } catch {
-            // Some runs may not have logs (e.g. third-party checks)
-          }
-        }
-
-        if (failureLogs.length > MAX_LOG_CHARS) {
-          failureLogs = failureLogs.slice(-MAX_LOG_CHARS);
-          failureLogs = '... [truncated]\n' + failureLogs;
-        }
+        // Bitbucket doesn't expose failure logs via CLI — only URLs
+        const failureUrls = failed
+          .filter((c) => c.url)
+          .map((c) => `${c.name}: ${c.url}`)
+          .join('\n');
 
         return {
           status: 'fail',
           summary: `${failed.length}/${checks.length} checks failed: ${failed.map((c) => c.name).join(', ')}`,
-          failureLogs: failureLogs.trim() || undefined,
+          failureLogs: failureUrls || undefined,
         };
       }
 
@@ -244,40 +219,28 @@ export class GitHubAdapter implements CodeHostingAdapter {
   ): Promise<void> {
     const { projectPath, branchName, taskId, projectName } = options;
 
-    // Conventional commit + push
     await execFileAsync('git', ['push', 'origin', branchName], projectPath, 60000, false, env);
-    sendLog(q, getWindow, taskId, projectName, `GitHub: pushed to ${branchName}`, 'ok');
+    sendLog(q, getWindow, taskId, projectName, `Bitbucket: pushed to ${branchName}`, 'ok');
   }
 
   async closePR(
     options: ClosePROptions,
     env: CodeHostingEnvVars
   ): Promise<void> {
-    const args = ['pr', 'close', String(options.prNumber)];
-    if (options.comment) {
-      args.push('--comment', options.comment);
-    }
-    await execFileAsync('gh', args, options.projectPath, 15000, false, env);
+    const args = ['pr', 'decline', String(options.prNumber)];
+    await execFileAsync('bkt', args, options.projectPath, 15000, false, env);
   }
 
   async cleanupOldComments(
-    options: CleanupOldCommentsOptions,
-    env: CodeHostingEnvVars,
+    _options: CleanupOldCommentsOptions,
+    _env: CodeHostingEnvVars,
     q: Queries,
     getWindow: GetWindow,
     taskId: string,
     projectName: string
   ): Promise<void> {
-    await cleanupOldPRComments(
-      options.projectPath,
-      options.prNumber,
-      taskId,
-      projectName,
-      q,
-      getWindow,
-      options.keepCycles,
-      env
-    );
+    // Bitbucket has no comment deletion/minimization API — no-op
+    sendLog(q, getWindow, taskId, projectName, 'Bitbucket does not support comment cleanup — skipping.', 'info');
   }
 
   async fetchFeedbackFull(

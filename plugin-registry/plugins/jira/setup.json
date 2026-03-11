@@ -1,0 +1,38 @@
+{
+  "steps": [
+    {
+      "type": "mcp_add",
+      "description": "Add mcp-atlassian MCP server to Claude Code",
+      "command": "claude mcp add mcp-atlassian -- uvx mcp-atlassian",
+      "env": {
+        "JIRA_URL": "{config.jiraUrl}",
+        "JIRA_USERNAME": "{config.jiraUsername}",
+        "JIRA_API_TOKEN": "{config.jiraApiToken}"
+      },
+      "envAlternate": {
+        "label": "Jira Data Center (Personal Access Token)",
+        "env": {
+          "JIRA_URL": "{config.jiraUrl}",
+          "JIRA_PERSONAL_TOKEN": "{config.jiraPersonalToken}"
+        }
+      }
+    },
+    {
+      "type": "cli_check",
+      "description": "Verify uvx is available (required to run mcp-atlassian)",
+      "command": "uvx --version"
+    },
+    {
+      "type": "cli_check",
+      "description": "Verify MCP server is registered",
+      "command": "claude mcp list"
+    }
+  ],
+  "uninstall": [
+    {
+      "type": "mcp_add",
+      "description": "Remove mcp-atlassian MCP server from Claude Code",
+      "command": "claude mcp remove mcp-atlassian"
+    }
+  ]
+}

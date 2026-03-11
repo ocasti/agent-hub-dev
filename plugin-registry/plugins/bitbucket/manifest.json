@@ -1,0 +1,59 @@
+{
+  "provides": ["ship", "pr_feedback"],
+
+  "operations": {
+    "createPR": {
+      "tool": "cli_exec",
+      "server": "local",
+      "args": {
+        "command": "bkt pr create --title \"{prTitle}\" --source {branchName} --target {defaultBranch} --json"
+      },
+      "description": "Create a pull request on Bitbucket"
+    },
+    "fetchPRComments": {
+      "tool": "cli_exec",
+      "server": "local",
+      "args": {
+        "command": "bkt pr view {prNumber} --json"
+      },
+      "description": "Fetch review comments from a pull request"
+    },
+    "mergePR": {
+      "tool": "cli_exec",
+      "server": "local",
+      "args": {
+        "command": "bkt pr merge {prNumber} --squash --delete-branch"
+      },
+      "description": "Merge a pull request with squash"
+    }
+  },
+
+  "workflow": {
+    "phases": [
+      {
+        "id": "ship",
+        "label": "Ship",
+        "after": "core_complete",
+        "capability": "ship",
+        "icon": "rocket",
+        "promptTemplate": "Create a conventional commit, push the branch '{branchName}' to origin, and open a pull request against '{defaultBranch}' with a clear title and description summarizing the changes."
+      },
+      {
+        "id": "pr_feedback",
+        "label": "PR Feedback",
+        "after": "ship",
+        "capability": "pr_feedback",
+        "icon": "message-square",
+        "promptTemplate": "Review the PR feedback comments and apply the requested changes. After fixing, push the updates to the same branch."
+      }
+    ],
+    "hooks": [
+      {
+        "event": "on:pr_created",
+        "operation": "fetchPRComments",
+        "priority": 50,
+        "blocking": false
+      }
+    ]
+  }
+}

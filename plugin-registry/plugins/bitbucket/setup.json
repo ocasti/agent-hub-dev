@@ -1,0 +1,15 @@
+{
+  "steps": [
+    {
+      "type": "cli_check",
+      "description": "Checking Bitbucket CLI (bkt) is installed...",
+      "command": "bkt --version"
+    },
+    {
+      "type": "cli_check",
+      "description": "Checking Bitbucket CLI authentication...",
+      "command": "bkt auth status"
+    }
+  ],
+  "uninstall": []
+}

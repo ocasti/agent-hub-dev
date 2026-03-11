@@ -1,8 +1,74 @@
 [
   {
+    "id": "bitbucket",
+    "name": "Bitbucket",
+    "version": "1.0.0",
+    "description": "Git operations, pull requests, and code review via Bitbucket CLI (bkt)",
+    "author": "Agent Hub",
+    "capabilities": [
+      "ship",
+      "pr_feedback"
+    ],
+    "level": 2,
+    "source": "official",
+    "icon": "bitbucket",
+    "tags": [
+      "code-hosting",
+      "git",
+      "pull-requests"
+    ],
+    "category": "Code Hosting",
+    "downloadUrl": "https://github.com/ocasti/agent-hub-dev/releases/latest/download/bitbucket.tar.gz",
+    "homepage": "https://github.com/ocasti/agent-hub-dev/blob/main/plugin-registry/plugins/bitbucket/README.md",
+    "license": "MIT",
+    "updatedAt": "2026-03-11T20:13:31.403Z",
+    "configSchema": [
+      {
+        "key": "defaultBranch",
+        "label": "Default Branch",
+        "type": "text",
+        "required": false,
+        "default": "main",
+        "description": "The default branch for pull request targets (e.g. main, master, develop)"
+      },
+      {
+        "key": "host",
+        "label": "Bitbucket Host",
+        "type": "select",
+        "required": false,
+        "default": "cloud",
+        "options": [
+          {
+            "label": "Bitbucket Cloud (bitbucket.org)",
+            "value": "cloud"
+          },
+          {
+            "label": "Bitbucket Data Center (self-hosted)",
+            "value": "datacenter"
+          }
+        ],
+        "description": "Select Cloud for bitbucket.org or Data Center for self-hosted instances"
+      },
+      {
+        "key": "authorName",
+        "label": "Git Author Name",
+        "type": "text",
+        "required": false,
+        "description": "Override git commit author name. Leave empty to use global git config."
+      },
+      {
+        "key": "authorEmail",
+        "label": "Git Author Email",
+        "type": "text",
+        "required": false,
+        "description": "Override git commit author email. Leave empty to use global git config."
+      }
+    ]
+  },
+  {
     "id": "github",
     "name": "GitHub",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "Git operations, pull requests, and code review via GitHub CLI",
     "author": "Agent Hub",
     "capabilities": [
@@ -21,7 +87,7 @@
     "downloadUrl": "https://github.com/ocasti/agent-hub-dev/releases/latest/download/github.tar.gz",
     "homepage": "https://github.com/ocasti/agent-hub-dev/blob/main/plugin-registry/plugins/github/README.md",
     "license": "MIT",
-    "updatedAt": "2026-03-08T00:53:48.450Z",
+    "updatedAt": "2026-03-11T20:13:31.404Z",
     "configSchema": [
       {
         "key": "defaultBranch",
@@ -30,6 +96,95 @@
         "required": false,
         "default": "main",
         "description": "The default branch for pull request targets (e.g. main, master, develop)"
+      },
+      {
+        "key": "token",
+        "label": "GitHub Token",
+        "type": "text",
+        "required": false,
+        "secret": true,
+        "description": "Personal access token (GH_TOKEN). Leave empty to use gh auth login credentials."
+      },
+      {
+        "key": "authorName",
+        "label": "Git Author Name",
+        "type": "text",
+        "required": false,
+        "description": "Override git commit author name. Leave empty to use global git config."
+      },
+      {
+        "key": "authorEmail",
+        "label": "Git Author Email",
+        "type": "text",
+        "required": false,
+        "description": "Override git commit author email. Leave empty to use global git config."
+      }
+    ]
+  },
+  {
+    "id": "jira",
+    "name": "Jira",
+    "version": "1.0.0",
+    "description": "Sync issues, transitions, sprints, and dev tasks with Jira via MCP (mcp-atlassian)",
+    "author": "Agent Hub",
+    "capabilities": [
+      "pm",
+      "enrichment"
+    ],
+    "level": 1,
+    "source": "official",
+    "icon": "jira",
+    "tags": [
+      "pm",
+      "jira",
+      "atlassian",
+      "issues",
+      "agile"
+    ],
+    "category": "PM Tools",
+    "downloadUrl": "https://github.com/ocasti/agent-hub-dev/releases/latest/download/jira.tar.gz",
+    "homepage": "https://github.com/ocasti/agent-hub-dev/blob/main/plugin-registry/plugins/jira/README.md",
+    "license": "MIT",
+    "updatedAt": "2026-03-11T20:13:31.405Z",
+    "configSchema": [
+      {
+        "key": "projectKey",
+        "label": "Jira Project Key",
+        "type": "text",
+        "required": true,
+        "description": "The Jira project key (e.g. PROJ, ENG, MOBILE)"
+      },
+      {
+        "key": "issueType",
+        "label": "Default Issue Type",
+        "type": "text",
+        "required": false,
+        "default": "Task",
+        "description": "Default issue type for created subtasks (e.g. Task, Sub-task, Story)"
+      },
+      {
+        "key": "statusInProgress",
+        "label": "Status: In Progress",
+        "type": "text",
+        "required": true,
+        "default": "In Progress",
+        "description": "Jira transition name to set when work begins"
+      },
+      {
+        "key": "statusInReview",
+        "label": "Status: In Review",
+        "type": "text",
+        "required": false,
+        "default": "In Review",
+        "description": "Jira transition name to set when PR is created"
+      },
+      {
+        "key": "statusDone",
+        "label": "Status: Done",
+        "type": "text",
+        "required": true,
+        "default": "Done",
+        "description": "Jira transition name to set when task completes"
       }
     ]
   }

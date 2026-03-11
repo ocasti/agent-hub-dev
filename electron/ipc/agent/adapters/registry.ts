@@ -1,34 +1,57 @@
 // ── Adapter Registry & Credential Resolver ──────────────────────────────────────
 //
-// Provides adapter lookup by plugin ID and credential resolution
-// (global plugin config + per-project override).
+// Dynamic adapter discovery: adapters are only available when their
+// corresponding plugin is installed and enabled. No hardcoded adapter map.
 
 import type Database from 'better-sqlite3';
 import type { CodeHostingAdapter, CodeHostingCredentials, CodeHostingEnvVars, CodeHostingProjectConfig } from './types';
 import { GitHubAdapter } from './github';
+import { BitbucketAdapter } from './bitbucket';
 import { loadAllPlugins } from '../../plugins/loader';
 
-// ── Adapter Registry ────────────────────────────────────────────────────────────
+// ── Adapter Factories ───────────────────────────────────────────────────────
+// Maps plugin ID → adapter constructor. Known at compile time (Level 2 plugins
+// are TypeScript modules), but only instantiated when the plugin is installed.
 
-const adapters: Record<string, CodeHostingAdapter> = {
-  github: new GitHubAdapter(),
+const adapterFactories: Record<string, () => CodeHostingAdapter> = {
+  github: () => new GitHubAdapter(),
+  bitbucket: () => new BitbucketAdapter(),
 };
+
+/** Lazy cache — adapters are instantiated on first use */
+const adapterCache: Record<string, CodeHostingAdapter> = {};
 
 /**
  * Get the code hosting adapter for a given plugin ID.
+ * Only returns an adapter if the corresponding plugin is installed and enabled.
  */
 export function getAdapter(pluginId: string): CodeHostingAdapter | undefined {
-  return adapters[pluginId];
+  // Check if plugin is installed and enabled
+  const plugins = loadAllPlugins();
+  const plugin = plugins.find((p) => p.id === pluginId && p.enabled);
+  if (!plugin) return undefined;
+
+  // Lazy instantiate
+  if (!adapterCache[pluginId]) {
+    const factory = adapterFactories[pluginId];
+    if (!factory) return undefined;
+    adapterCache[pluginId] = factory();
+  }
+
+  return adapterCache[pluginId];
 }
 
 /**
- * Register a new adapter (for future providers like GitLab, Bitbucket).
+ * Register an adapter factory at runtime.
+ * Used by future plugins that ship their own adapter module.
  */
-export function registerAdapter(adapter: CodeHostingAdapter): void {
-  adapters[adapter.id] = adapter;
+export function registerAdapterFactory(pluginId: string, factory: () => CodeHostingAdapter): void {
+  adapterFactories[pluginId] = factory;
+  // Invalidate cache so next getAdapter() picks up the new factory
+  delete adapterCache[pluginId];
 }
 
-// ── Credential Resolution ───────────────────────────────────────────────────────
+// ── Credential Resolution ───────────────────────────────────────────────────
 
 /**
  * Resolve credentials for a project by merging:
@@ -97,7 +120,7 @@ export function resolveEnvVars(
 
 /**
  * Get the adapter for a project's active code hosting plugin.
- * Returns undefined if no code hosting plugin is active.
+ * Returns undefined if no code hosting plugin is active or installed.
  */
 export function getProjectAdapter(
   projectId: string,
