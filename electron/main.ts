@@ -208,6 +208,9 @@ function getPersistedLocale(): string {
 }
 
 app.whenReady().then(() => {
+  const t0 = Date.now();
+  console.log('[startup] app ready');
+
   // Register custom protocol to serve images from app storage
   protocol.handle('app-image', (request) => {
     const fileName = decodeURIComponent(request.url.replace('app-image://', ''));
@@ -220,12 +223,15 @@ app.whenReady().then(() => {
     return net.fetch(`file://${filePath}`);
   });
 
+  console.log('[startup] initDatabase...');
   db = initDatabase();
+  console.log(`[startup] initDatabase done (${Date.now() - t0}ms)`);
 
   // Apply persisted locale to main-process i18n before building menu
   const locale = getPersistedLocale();
   i18nMain.changeLanguage(locale);
 
+  console.log('[startup] registering IPC handlers...');
   registerProjectHandlers(ipcMain, db);
   registerTaskHandlers(ipcMain, db);
   registerAgentHandlers(ipcMain, db, () => mainWindow);
@@ -238,12 +244,15 @@ app.whenReady().then(() => {
   registerUpdateHandlers(ipcMain, db, () => mainWindow);
   registerNotificationHandlers(ipcMain, db);
   initNotifications(db, () => mainWindow);
+  console.log(`[startup] IPC handlers done (${Date.now() - t0}ms)`);
 
   // App version
   ipcMain.handle('app:getVersion', () => app.getVersion());
 
   // Clean orphan worktrees from previous sessions
-  try { cleanOrphanWorktrees(db); } catch { /* ignore */ }
+  console.log('[startup] cleaning orphan worktrees...');
+  try { cleanOrphanWorktrees(db); } catch (err) { console.error('[startup] cleanOrphanWorktrees error:', err); }
+  console.log(`[startup] worktree cleanup done (${Date.now() - t0}ms)`);
 
   // Background license validation 3s after window creation
   setTimeout(() => {
@@ -269,7 +278,9 @@ app.whenReady().then(() => {
   }
 
   createAppMenu();
+  console.log(`[startup] creating window (${Date.now() - t0}ms)`);
   createWindow();
+  console.log(`[startup] window created (${Date.now() - t0}ms)`);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

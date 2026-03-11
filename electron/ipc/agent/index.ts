@@ -562,7 +562,7 @@ IMPORTANT: Output ONLY the acceptance criteria, one per line. No headings, no nu
 
   // ── Worktree management ─────────────────────────────────────────────────────
 
-  ipcMain.handle('worktree:list', () => {
+  ipcMain.handle('worktree:list', async () => {
     return listActiveWorktrees(db);
   });
 

@@ -7,7 +7,7 @@ import { executePluginOperation, completeSubtask, completeCriterion, refreshSubt
 import Badge from './ui/Badge';
 import ProgressBar from './ui/ProgressBar';
 import SkillTag from './ui/SkillTag';
-import { IconEdit, IconPlay, IconStop, IconRuler, IconDownload, IconCircleCheck, IconImage, IconRetry, IconChevronDown, IconX, IconRefresh } from './ui/Icons';
+import { IconEdit, IconPlay, IconStop, IconRuler, IconDownload, IconCircleCheck, IconImage, IconRetry, IconChevronDown, IconX, IconRefresh, IconClipboard } from './ui/Icons';
 
 interface TaskDetailProps {
   task: Task;
@@ -249,6 +249,35 @@ export default function TaskDetail({
               </button>
               <button onClick={onApprove} className="text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-3 py-1.5 rounded-lg flex items-center gap-1">
                 <IconCircleCheck className="w-3 h-3" /> {t('button.approve')}
+              </button>
+              <button
+                onClick={() => {
+                  const criteria = task.acceptanceCriteria || [];
+                  const criteriaText = criteria.length > 0
+                    ? criteria.map((c, i) => `${i + 1}. ${c}`).join('\n')
+                    : 'No specific acceptance criteria defined.';
+                  setActionModalPrompt(
+`You are a QA tester. Your goal is to validate the acceptance criteria for the feature: "${task.title}".
+
+## Setup
+Switch to the worktree with branch: ${task.branchName || 'unknown'}
+
+Start the development environment and navigate to the application.
+
+## Acceptance Criteria to Validate:
+${criteriaText}
+
+## Instructions:
+- Test each criterion one by one, in order
+- For each one, describe: what you did, what you observed, and whether it PASSES or FAILS
+- Take screenshots of the results when possible
+- If a criterion fails, describe the expected vs actual behavior clearly
+- Report a final summary: how many passed, how many failed, and any blocking issues found`
+                  );
+                }}
+                className="text-xs bg-teal-600 hover:bg-teal-700 text-white font-medium px-3 py-1.5 rounded-lg flex items-center gap-1"
+              >
+                <IconClipboard className="w-3 h-3" /> {t('button.qaPrompt', 'QA Prompt')}
               </button>
             </>
           )}

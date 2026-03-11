@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { Project, Task, Log, Settings, ActiveAgent, LicenseLimits, TierName, UpdateInfo, UpdateProgress, PluginCompatResult } from './lib/types';
+import type { Project, Task, Log, Settings, ActiveAgent, LicenseLimits, TierName, UpdateInfo, UpdateProgress, PluginCompatResult, WorktreeInfo } from './lib/types';
 import * as ipc from './lib/ipc';
 import Sidebar, { type ViewId } from './components/Sidebar';
 import Dashboard from './components/Dashboard';
@@ -54,6 +54,7 @@ export default function App() {
   const [updateDownloaded, setUpdateDownloaded] = useState<UpdateInfo | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [pluginCompatWarnings, setPluginCompatWarnings] = useState<PluginCompatResult[]>([]);
+  const [worktrees, setWorktrees] = useState<WorktreeInfo[]>([]);
 
   const setView = useCallback((v: ViewId) => {
     setViewRaw(v);
@@ -191,6 +192,19 @@ export default function App() {
     }, 5000);
     return () => clearInterval(interval);
   }, []);
+
+  // Worktree refresh (every 30s, persists across tab switches)
+  const loadWorktrees = useCallback(() => {
+    ipc.listWorktrees().then(setWorktrees).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if ((licenseLimits?.max_parallel_per_project ?? 1) > 1) {
+      loadWorktrees();
+      const interval = setInterval(loadWorktrees, 30000);
+      return () => clearInterval(interval);
+    }
+  }, [licenseLimits, loadWorktrees]);
 
   async function loadData() {
     await Promise.all([loadProjects(), loadTasks(), loadLogs(), loadSettings()]);
@@ -671,6 +685,8 @@ export default function App() {
           setPendingDetailTaskId(task.id);
           setView('tasks');
         }}
+        worktrees={worktrees}
+        onRefreshWorktrees={loadWorktrees}
       />
     ),
     tasks: (

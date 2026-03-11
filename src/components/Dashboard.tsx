@@ -33,6 +33,7 @@ interface DashboardProps {
   updateError?: string | null;
   licenseLimits?: LicenseLimits;
   pluginCompatWarnings?: PluginCompatResult[];
+  worktrees?: WorktreeInfo[];
   onDownloadUpdate?: () => void;
   onInstallUpdate?: () => void;
   onSkipUpdate?: (version: string) => void;
@@ -42,27 +43,18 @@ interface DashboardProps {
   onFetchAndFix: (task: Task) => void;
   onApproveTask: (task: Task) => void;
   onNavigateToTask: (task: Task) => void;
+  onRefreshWorktrees?: () => void;
 }
 
-export default function Dashboard({ tasks, logs, settings, agents, updateAvailable, updateProgress, updateDownloaded, updateError, licenseLimits, pluginCompatWarnings, onDownloadUpdate, onInstallUpdate, onSkipUpdate, onRefineSpec, onContinueSpec, onContinuePlan, onFetchAndFix, onApproveTask, onNavigateToTask }: DashboardProps) {
+export default function Dashboard({ tasks, logs, settings, agents, updateAvailable, updateProgress, updateDownloaded, updateError, licenseLimits, pluginCompatWarnings, worktrees: worktreesProp, onDownloadUpdate, onInstallUpdate, onSkipUpdate, onRefineSpec, onContinueSpec, onContinuePlan, onFetchAndFix, onApproveTask, onNavigateToTask, onRefreshWorktrees }: DashboardProps) {
   const { t } = useTranslation(['dashboard', 'common', 'tasks']);
-  const [worktrees, setWorktrees] = useState<WorktreeInfo[]>([]);
+  const worktrees = worktreesProp || [];
   const [merging, setMerging] = useState<string | null>(null);
   const [mergeResult, setMergeResult] = useState<{ taskId: string; success: boolean; message: string } | null>(null);
   const [diffData, setDiffData] = useState<{ taskId: string; diff: WorktreeDiff } | null>(null);
   const [diffLoading, setDiffLoading] = useState<string | null>(null);
 
-  const loadWorktrees = useCallback(() => {
-    ipc.listWorktrees().then(setWorktrees).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    if ((licenseLimits?.max_parallel_per_project ?? 1) > 1) {
-      loadWorktrees();
-      const interval = setInterval(loadWorktrees, 10000);
-      return () => clearInterval(interval);
-    }
-  }, [licenseLimits, loadWorktrees]);
+  const loadWorktrees = onRefreshWorktrees || (() => {});
 
   const handleMerge = useCallback(async (taskId: string) => {
     setMerging(taskId);

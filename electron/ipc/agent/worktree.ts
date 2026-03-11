@@ -246,6 +246,7 @@ export function cleanOrphanWorktrees(db: Database.Database): void {
   if (!fs.existsSync(baseDir)) return;
 
   const entries = fs.readdirSync(baseDir, { withFileTypes: true });
+  console.log(`[startup] worktrees: found ${entries.filter(e => e.isDirectory()).length} entries in ${baseDir}`);
   const activeStatuses = new Set([
     'spec_review', 'spec_feedback', 'planning', 'plan_review',
     'implementing', 'reviewing', 'fixing', 'shipping',
@@ -272,7 +273,7 @@ export function cleanOrphanWorktrees(db: Database.Database): void {
       }
 
       if (!task || !activeStatuses.has(task.status) || worktreeBroken) {
-        // Task doesn't exist, is completed/failed/queued, or worktree is broken — clean up
+        console.log(`[startup] worktree cleanup: ${taskId} (status=${task?.status || 'no-task'}, broken=${worktreeBroken})`);
         const project = task
           ? db.prepare('SELECT path FROM projects WHERE id = ?').get(task.project_id) as { path: string } | undefined
           : undefined;
@@ -302,7 +303,7 @@ export function cleanOrphanWorktrees(db: Database.Database): void {
 /**
  * List all active worktrees with metadata for the Dashboard.
  */
-export function listActiveWorktrees(db: Database.Database): WorktreeInfo[] {
+export async function listActiveWorktrees(db: Database.Database): Promise<WorktreeInfo[]> {
   const rows = db.prepare(`
     SELECT t.id, t.title, t.status, t.branch_name, t.worktree_path,
            p.name AS project_name, p.id AS project_id
@@ -315,7 +316,7 @@ export function listActiveWorktrees(db: Database.Database): WorktreeInfo[] {
     worktree_path: string; project_name: string; project_id: string;
   }[];
 
-  return rows.map((r) => ({
+  const results = await Promise.all(rows.map(async (r) => ({
     taskId: r.id,
     taskTitle: r.title,
     taskStatus: r.status,
@@ -323,22 +324,27 @@ export function listActiveWorktrees(db: Database.Database): WorktreeInfo[] {
     worktreePath: r.worktree_path,
     projectName: r.project_name,
     projectId: r.project_id,
-    diskSizeMB: getDirSizeMB(r.worktree_path),
-  }));
+    diskSizeMB: await getDirSizeMBAsync(r.worktree_path),
+  })));
+
+  return results;
 }
 
-function getDirSizeMB(dirPath: string): number {
+async function getDirSizeMBAsync(dirPath: string): Promise<number> {
   try {
     if (!fs.existsSync(dirPath)) return 0;
-    // Quick estimate: count files shallowly (node_modules dominates)
     const stat = fs.statSync(dirPath);
     if (!stat.isDirectory()) return 0;
-    // Use du for accurate size on unix
-    const { execFileSync } = require('child_process');
-    const output = execFileSync('du', ['-sk', dirPath], { timeout: 5000, encoding: 'utf8' }) as string;
-    const kb = parseInt(output.split('\t')[0], 10);
+    const output = await execFileAsync('du', ['-sk', dirPath], undefined, 15000);
+    const firstLine = output.trim().split('\n')[0];
+    const kb = parseInt(firstLine, 10);
+    if (isNaN(kb) || kb <= 0) {
+      console.warn(`[worktree] du parse failed for ${dirPath}: "${firstLine}"`);
+      return 0;
+    }
     return Math.round((kb / 1024) * 10) / 10;
-  } catch {
+  } catch (err) {
+    console.warn(`[worktree] getDirSizeMBAsync error for ${dirPath}:`, err);
     return 0;
   }
 }
