@@ -220,4 +220,11 @@ export const MIGRATIONS = [
       INSERT OR IGNORE INTO settings (key, value) VALUES ('tasks_filter_statuses', '[]');
     `,
   },
+  {
+    version: 19,
+    name: '019_project_default_model',
+    sql: `
+      ALTER TABLE projects ADD COLUMN default_model TEXT DEFAULT 'sonnet';
+    `,
+  },
 ];

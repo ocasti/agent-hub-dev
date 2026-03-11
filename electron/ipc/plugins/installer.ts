@@ -129,11 +129,12 @@ export async function installPlugin(
 
   const manifest = loadPluginManifest(pluginDir);
 
+  const finalConfig = pluginId === 'slack' ? normalizeSlackPluginConfig(config) : config;
   const entry: InstalledPlugin = {
     id: pluginId,
     version: manifest?.version || '0.0.0',
     enabled: true,
-    config,
+    config: finalConfig,
     source: 'community',
     installedAt: new Date().toISOString(),
     pluginDir,
@@ -165,6 +166,26 @@ export async function uninstallPlugin(pluginId: string): Promise<void> {
 
 // ── Config ──────────────────────────────────────────────────────────────────────
 
+/**
+ * Normalize Slack plugin config: when channelProgress, channelCompletion, or
+ * channelAlerts are empty, set them to defaultChannel so hooks always have a valid channel.
+ */
+function normalizeSlackPluginConfig(config: Record<string, string>): Record<string, string> {
+  const defaultChannel = (config.defaultChannel || '').trim();
+  if (!defaultChannel) return config;
+
+  const channelProgress = (config.channelProgress || '').trim() || defaultChannel;
+  const channelCompletion = (config.channelCompletion || '').trim() || defaultChannel;
+  const channelAlerts = (config.channelAlerts || '').trim() || defaultChannel;
+
+  return {
+    ...config,
+    channelProgress,
+    channelCompletion,
+    channelAlerts,
+  };
+}
+
 export async function updatePluginConfig(
   pluginId: string,
   config: Record<string, string>
@@ -176,6 +197,9 @@ export async function updatePluginConfig(
   }
 
   plugin.config = { ...plugin.config, ...config };
+  if (pluginId === 'slack') {
+    plugin.config = normalizeSlackPluginConfig(plugin.config);
+  }
   saveInstalledPlugins(installed);
 }
 
@@ -345,11 +369,12 @@ export async function installBundledPlugin(
   }
 
   // Register in installed.json
+  const finalConfig = pluginId === 'slack' ? normalizeSlackPluginConfig(config) : config;
   const entry: InstalledPlugin = {
     id: pluginId,
     version: manifest?.version || '1.0.0',
     enabled: true,
-    config,
+    config: finalConfig,
     source: 'official',
     installedAt: new Date().toISOString(),
     pluginDir,
@@ -366,7 +391,7 @@ export async function installBundledPlugin(
   if (existsSync(setupPath)) {
     try {
       const setup = JSON.parse(readFileSync(setupPath, 'utf-8')) as PluginSetup;
-      await executeMcpSetup(setup, config);
+      await executeMcpSetup(setup, finalConfig);
     } catch (err) {
       console.error(`[plugins] Setup execution failed for ${pluginId}:`, err);
     }
@@ -433,12 +458,13 @@ export async function installPluginFromDisk(
   const loadedManifest = loadPluginManifest(pluginDir);
   const workflow = loadPluginWorkflow(pluginDir);
 
+  const finalConfig = pluginId === 'slack' ? normalizeSlackPluginConfig(config) : config;
   // Register in installed.json
   const entry: InstalledPlugin = {
     id: pluginId,
     version: manifest.version || '0.0.0',
     enabled: true,
-    config,
+    config: finalConfig,
     source: 'local',
     installedAt: new Date().toISOString(),
     pluginDir,

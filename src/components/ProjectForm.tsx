@@ -39,6 +39,7 @@ export default function ProjectForm({ project, onSave, onCancel, licensePlan = '
     pluginPmConfig: project?.pluginPmConfig || {} as Record<string, string>,
     aiAgent: project?.aiAgent || 'claude',
     aiAgentPhases: project?.aiAgentPhases || {} as Record<string, { primary: string; fallback?: string }>,
+    defaultModel: project?.defaultModel || 'sonnet',
   });
 
   const [availablePlugins, setAvailablePlugins] = useState<Plugin[]>([]);
@@ -354,6 +355,19 @@ export default function ProjectForm({ project, onSave, onCancel, licensePlan = '
                 <p className="text-[10px] text-gray-400 mt-1">
                   {t('form.agentSingleHint', 'This agent will be used for all SDD workflow phases')}
                 </p>
+                {form.aiAgent === 'claude' && (
+                  <div className="mt-2">
+                    <label className="block text-[10px] text-gray-500 dark:text-gray-400 mb-1">{t('form.labelDefaultModel', 'Default Model')}</label>
+                    <select
+                      value={form.defaultModel}
+                      onChange={(e) => setForm({ ...form, defaultModel: e.target.value })}
+                      className="w-full max-w-xs border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+                    >
+                      <option value="sonnet">Sonnet</option>
+                      <option value="opus">Opus</option>
+                    </select>
+                  </div>
+                )}
               </div>
             ) : (
               /* Custom per phase mode — pipeline visual */

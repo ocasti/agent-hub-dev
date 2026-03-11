@@ -5,6 +5,29 @@ import { sendLog } from '../state';
 import { execFileAsync } from '../claude-cli';
 import type { AgentAdapter, AgentRunOptions, AgentRunResult, GenericAgentDef } from './types';
 
+// ── SDD Output Markers ───────────────────────────────────────────────────────
+// Known markers that indicate the agent produced valid SDD workflow output.
+// If any of these appear in the output, the agent completed meaningful work
+// regardless of exit code (some CLIs exit with code 1 even on success).
+const SDD_OUTPUT_MARKERS = [
+  // Phase 0 — Spec Review
+  '[SPEC_OK]', '[SPEC_INCOMPLETE]', '[SUGGESTION]',
+  // Phase 3 — Quality Gate
+  '[REVIEW_PASS]', '[REVIEW_ISSUES]', '[ISSUE]',
+  '[KNOWLEDGE_ENTRY]', '[CRITERION_STATUS]',
+  '[RESOLVED_THREAD:', '[THREAD_REPLY:',
+  // Phase 4 — Ship
+  '[PR_NUMBER:', '[BRANCH:',
+];
+
+/**
+ * Check if agent output contains valid SDD markers, indicating the agent
+ * completed meaningful work despite a non-zero exit code.
+ */
+function outputContainsSddMarkers(output: string): boolean {
+  return SDD_OUTPUT_MARKERS.some((marker) => output.includes(marker));
+}
+
 /**
  * Config-driven adapter for any CLI agent.
  * Avoids creating separate adapter classes for each agent.
@@ -111,15 +134,56 @@ export class GenericAdapter implements AgentAdapter {
 
       child.on('close', (code: number | null) => {
         clearTimeout(timeout);
-        const result = code === 0 && !timedOut ? 'ok' : 'error';
+        const rawCode = code ?? 1;
+
+        // ── Exit code interpretation for non-Claude agents ──
+        // Some CLIs (e.g. Gemini) may exit with code 1 even when the agent
+        // completed its work successfully. We check for known patterns:
+        let effectiveCode = rawCode;
+
+        if (timedOut) {
+          effectiveCode = 1;
+        } else if (rawCode !== 0) {
+          const fatalCodes = this.def.fatalExitCodes || [];
+          const turnLimitCode = this.def.turnLimitExitCode;
+
+          if (fatalCodes.includes(rawCode)) {
+            // Fatal infrastructure error (auth, config, sandbox) — always fail
+            sendLog(q, getWindow, taskId, projectName,
+              `Agent fatal error (exit code ${rawCode}). Check ${this.name} configuration.`, 'error');
+          } else if (turnLimitCode !== undefined && rawCode === turnLimitCode) {
+            // Turn limit reached — check if output still has valid results
+            if (outputContainsSddMarkers(output)) {
+              sendLog(q, getWindow, taskId, projectName,
+                `Agent hit turn limit (exit code ${rawCode}) but produced valid output. Continuing.`, 'info');
+              effectiveCode = 0;
+            } else {
+              sendLog(q, getWindow, taskId, projectName,
+                `Agent hit turn limit (exit code ${rawCode}) without completing the phase.`, 'error');
+            }
+          } else if (outputContainsSddMarkers(output)) {
+            // General error (exit code 1) but output contains valid SDD markers
+            sendLog(q, getWindow, taskId, projectName,
+              `Agent exited with code ${rawCode} but output contains valid SDD markers. Treating as success.`, 'info');
+            effectiveCode = 0;
+          }
+          // else: genuine error, keep effectiveCode = rawCode
+        }
+
+        const result = effectiveCode === 0 && !timedOut ? 'ok' : 'error';
         if (taskId) q.finishAgentRun.run(result, output, timedOut ? errorOutput + '\n[TIMED_OUT]' : errorOutput, runId);
+
         if (timedOut) {
           sendLog(q, getWindow, taskId, projectName, `Agent phase timed out`, 'error');
+        } else if (effectiveCode !== rawCode) {
+          sendLog(q, getWindow, taskId, projectName,
+            `Agent phase exited with code ${rawCode} → interpreted as ${effectiveCode}`, 'ok');
         } else {
           sendLog(q, getWindow, taskId, projectName,
-            `Agent phase exited with code ${code}`, code === 0 ? 'ok' : 'error');
+            `Agent phase exited with code ${rawCode}`, rawCode === 0 ? 'ok' : 'error');
         }
-        resolve({ output, exitCode: timedOut ? 1 : (code ?? 1) });
+
+        resolve({ output, exitCode: timedOut ? 1 : effectiveCode });
       });
 
       child.on('error', (err: Error) => {
@@ -168,5 +232,11 @@ export const BUILTIN_AGENTS: GenericAgentDef[] = [
     stdinPrompt: true,
     envCleanKeys: [],
     configFolder: '.gemini/',
+    // Gemini CLI exit codes (from official docs):
+    // 41 = FatalAuthenticationError, 42 = FatalInputError,
+    // 44 = FatalSandboxError, 52 = FatalConfigError
+    fatalExitCodes: [41, 42, 44, 52],
+    // 53 = FatalTurnLimitedError (max conversation turns reached)
+    turnLimitExitCode: 53,
   },
 ];

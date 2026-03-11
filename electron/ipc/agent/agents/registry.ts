@@ -127,7 +127,12 @@ export function resolveAgentForPhase(
     }
   }
 
-  const primary = registry.get(primaryId) || registry.get('claude')!;
+  const primary = registry.get(primaryId);
+  if (!primary) {
+    throw new Error(
+      `Configured AI agent "${primaryId}" is not registered. Available agents: ${[...registry.keys()].join(', ')}`
+    );
+  }
   const fallback = fallbackId ? registry.get(fallbackId) : undefined;
 
   return { primary, fallback };
@@ -156,40 +161,25 @@ export async function runAgentPhase(
   const task = options.q.getTask.get(options.taskId) as { project_name: string } | undefined;
   const projectName = task?.project_name || '';
 
-  // Validate primary agent is installed — if not, try fallback or any installed agent
+  // Validate primary agent is installed — if not, try configured fallback ONLY (no silent switch)
   const primaryInstalled = await primary.checkInstalled();
   if (!primaryInstalled) {
     if (fallback) {
       const fallbackInstalled = await fallback.checkInstalled();
       if (fallbackInstalled) {
         sendLog(options.q, options.getWindow, options.taskId, projectName,
-          `Agent "${primary.name}" is not installed. Using fallback: ${fallback.name}`, 'info');
+          `Agent "${primary.name}" is not installed. Using configured fallback: ${fallback.name}`, 'info');
         primary = fallback;
         fallback = undefined;
-      }
-    }
-
-    // Still not installed? Try to find ANY installed agent
-    if (!primaryInstalled && !(await primary.checkInstalled())) {
-      const allAgents = getAllAgents();
-      for (const agent of allAgents) {
-        const ver = await agent.checkInstalled();
-        if (ver) {
-          sendLog(options.q, options.getWindow, options.taskId, projectName,
-            `Agent "${primary.name}" is not installed. Falling back to ${agent.name} (${ver})`, 'info');
-          primary = agent;
-          fallback = undefined;
-          break;
-        }
-      }
-
-      // If still no agent found, give a clear error
-      const finalCheck = await primary.checkInstalled();
-      if (!finalCheck) {
+      } else {
         throw new Error(
-          `No AI agent is installed on this machine. Install at least one agent CLI (e.g. claude, gemini, codex) and try again.`
+          `Agent "${primary.name}" is not installed and fallback "${fallback.name}" is also not available. Install "${primary.binary}" or "${fallback.binary}" and try again.`
         );
       }
+    } else {
+      throw new Error(
+        `Agent "${primary.name}" (${primary.binary}) is not installed. Install it and try again, or configure a different agent in project settings.`
+      );
     }
   }
 

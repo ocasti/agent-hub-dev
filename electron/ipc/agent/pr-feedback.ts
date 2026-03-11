@@ -36,7 +36,9 @@ export async function runFetchAndFix(
     const workDir = resolveWorkDir(task, db);
     const projectName = task.project_name;
     const projectDescription = readAgentMd(workDir) || task.project_description || '';
-    const model = task.model;
+    // Resolve model from project (preferred) or fall back to task.model (legacy)
+    const projRow = q.getProject.get(task.project_id) as Record<string, unknown> | undefined;
+    const model = (projRow?.default_model as string) || task.model;
     const criteria = JSON.parse(task.acceptance_criteria || '[]') as string[];
     const knowledge = (q.getProjectKnowledge.all(task.project_id) || []) as KnowledgeRow[];
 
@@ -824,7 +826,9 @@ export async function runFetchAndFixPushOnly(
     const projectPath = task.project_path;
     const workDir = resolveWorkDir(task, db);
     const projectName = task.project_name;
-    const model = task.model;
+    // Resolve model from project (preferred) or fall back to task.model (legacy)
+    const projRowPush = q.getProject.get(task.project_id) as Record<string, unknown> | undefined;
+    const model = (projRowPush?.default_model as string) || task.model;
 
     // Resolve code hosting env vars and adapter for subprocess calls
     const extraEnv = resolveEnvVars(task.project_id, db);

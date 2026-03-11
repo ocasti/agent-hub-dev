@@ -301,9 +301,12 @@ Resolve all conflicts now.`;
 
       try {
         q.updateTaskStatus.run('pr_fixing', taskId);
+        // Resolve model from project (preferred) or fall back to task.model (legacy)
+        const conflictProjRow = db.prepare('SELECT default_model FROM projects WHERE id = ?').get(task.project_id) as { default_model?: string } | undefined;
+        const conflictModel = conflictProjRow?.default_model || task.model;
         const { exitCode } = await primary.runPhase({
           projectPath: workDir,
-          model: task.model,
+          model: conflictModel,
           prompt,
           taskId,
           q,
@@ -458,12 +461,12 @@ IMPORTANT: Output ONLY the acceptance criteria, one per line. No headings, no nu
     } catch (err) {
       sendLog(q, getWindow, null, project.name, `Failed to write AGENT.md: ${(err as Error).message}. Saving to DB as fallback.`, 'error');
       // Fallback: save full content to DB description
-      q.updateProject.run(project.name, project.path, project.repo, result.agentMdContent, project.optional_skills, (project as Record<string, unknown>).test_command ?? '', (project as Record<string, unknown>).code_hosting ?? null, (project as Record<string, unknown>).code_hosting_config ?? '{}', (project as Record<string, unknown>).plugin_pm ?? null, (project as Record<string, unknown>).plugin_pm_config ?? '{}', (project as Record<string, unknown>).ai_agent ?? 'claude', (project as Record<string, unknown>).ai_agent_phases ?? '{}', project.id);
+      q.updateProject.run(project.name, project.path, project.repo, result.agentMdContent, project.optional_skills, (project as Record<string, unknown>).test_command ?? '', (project as Record<string, unknown>).code_hosting ?? null, (project as Record<string, unknown>).code_hosting_config ?? '{}', (project as Record<string, unknown>).plugin_pm ?? null, (project as Record<string, unknown>).plugin_pm_config ?? '{}', (project as Record<string, unknown>).ai_agent ?? 'claude', (project as Record<string, unknown>).ai_agent_phases ?? '{}', (project as Record<string, unknown>).default_model ?? 'sonnet', project.id);
       return result.shortDescription;
     }
 
     // Save short description to DB
-    q.updateProject.run(project.name, project.path, project.repo, result.shortDescription, project.optional_skills, (project as Record<string, unknown>).test_command ?? '', (project as Record<string, unknown>).code_hosting ?? null, (project as Record<string, unknown>).code_hosting_config ?? '{}', (project as Record<string, unknown>).plugin_pm ?? null, (project as Record<string, unknown>).plugin_pm_config ?? '{}', (project as Record<string, unknown>).ai_agent ?? 'claude', (project as Record<string, unknown>).ai_agent_phases ?? '{}', project.id);
+    q.updateProject.run(project.name, project.path, project.repo, result.shortDescription, project.optional_skills, (project as Record<string, unknown>).test_command ?? '', (project as Record<string, unknown>).code_hosting ?? null, (project as Record<string, unknown>).code_hosting_config ?? '{}', (project as Record<string, unknown>).plugin_pm ?? null, (project as Record<string, unknown>).plugin_pm_config ?? '{}', (project as Record<string, unknown>).ai_agent ?? 'claude', (project as Record<string, unknown>).ai_agent_phases ?? '{}', (project as Record<string, unknown>).default_model ?? 'sonnet', project.id);
 
     return result.shortDescription;
   });

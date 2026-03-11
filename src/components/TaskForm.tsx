@@ -869,24 +869,7 @@ export default function TaskForm({ projects, task, licenseLimits, onSave, onCanc
         </div>
         {getFieldsForPosition('after:images')}
 
-        {/* Model */}
         {getFieldsForPosition('before:model')}
-        <div>
-          <label className="block text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1.5 uppercase tracking-wider">{t('form.labelModel')}</label>
-          <select
-            value={form.model}
-            onChange={(e) => setForm({ ...form, model: e.target.value as 'sonnet' | 'opus' })}
-            className="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
-          >
-            <option value="sonnet">{t('form.modelSonnet')}</option>
-            <option
-              value="opus"
-              disabled={licenseLimits ? !licenseLimits.models.includes('opus') : false}
-            >
-              {t('form.modelOpus')}{licenseLimits && !licenseLimits.models.includes('opus') ? ' (Premium)' : ''}
-            </option>
-          </select>
-        </div>
         {getFieldsForPosition('after:model')}
 
         {/* form.end */}

@@ -348,9 +348,22 @@ export default function TasksView({
                           </div>
                         </div>
                         <div className="flex items-center gap-2 flex-shrink-0">
-                          <span className={`text-xs px-1.5 py-0.5 rounded ${task.model === 'opus' ? 'bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400' : 'bg-gray-50 dark:bg-gray-700 text-gray-500 dark:text-gray-400'}`}>
-                            {task.model}
-                          </span>
+                          {(() => {
+                            const taskProj = projects.find((p) => p.id === task.projectId);
+                            const isClaudeAgent = !taskProj || taskProj.aiAgent === 'claude';
+                            if (isClaudeAgent) {
+                              return (
+                                <span className={`text-xs px-1.5 py-0.5 rounded ${task.model === 'opus' ? 'bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400' : 'bg-gray-50 dark:bg-gray-700 text-gray-500 dark:text-gray-400'}`}>
+                                  {task.model}
+                                </span>
+                              );
+                            }
+                            return (
+                              <span className="text-xs px-1.5 py-0.5 rounded bg-gray-50 dark:bg-gray-700 text-gray-500 dark:text-gray-400">
+                                {taskProj.aiAgent}
+                              </span>
+                            );
+                          })()}
                           {(ag?.pr || task.prNumber) && (
                             <span className="text-xs bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 px-2 py-0.5 rounded font-mono">
                               PR #{ag?.pr || task.prNumber}

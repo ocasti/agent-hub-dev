@@ -114,8 +114,9 @@ export async function runTestFixLoop(
     const projectPath = task.project_path;
     const workDir = resolveWorkDir(task, db);
     const projectName = task.project_name;
-    const model = task.model;
-    const proj = q.getProject.get(task.project_id) as { test_command?: string } | undefined;
+    const proj = q.getProject.get(task.project_id) as Record<string, unknown> | undefined;
+    // Resolve model from project (preferred) or fall back to task.model (legacy)
+    const model = (proj?.default_model as string) || task.model;
     const testCmd = (proj as Record<string, unknown>)?.test_command as string || '';
     const testTimeoutMin = getSettingValue(q, 'test_timeout_min', 5);
     const testTimeoutMs = testTimeoutMin * 60000;

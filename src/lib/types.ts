@@ -23,6 +23,7 @@ export interface Project {
   pluginPmConfig?: Record<string, string>;
   aiAgent: string;
   aiAgentPhases: Record<string, { primary: string; fallback?: string }>;
+  defaultModel: string;
   createdAt: string;
   updatedAt: string;
 }

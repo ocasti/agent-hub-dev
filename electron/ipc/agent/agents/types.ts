@@ -64,6 +64,16 @@ export interface GenericAgentDef {
   envCleanKeys?: string[];
   /** Agent config folder relative to HOME (e.g. '.claude/'). Aligned with specify AGENT_CONFIG. */
   configFolder: string;
+  /**
+   * Exit codes that indicate fatal infrastructure errors (auth, config, sandbox).
+   * These always result in failure regardless of output content.
+   */
+  fatalExitCodes?: number[];
+  /**
+   * Exit code that indicates the agent hit its turn/conversation limit.
+   * Treated as a soft timeout — output is still checked for valid results.
+   */
+  turnLimitExitCode?: number;
 }
 
 // ── Speckit detection per agent ──────────────────────────────────────────────────

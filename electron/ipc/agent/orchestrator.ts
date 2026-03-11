@@ -47,7 +47,9 @@ export async function orchestrateSddWorkflow(
     let workDir = resolveWorkDir(task, db); // effective working directory
     const projectName = task.project_name;
     let projectDescription = readAgentMd(workDir) || task.project_description || '';
-    const model = task.model;
+    // Resolve model from project (preferred) or fall back to task.model (legacy)
+    const projRow = q.getProject.get(task.project_id) as Record<string, unknown> | undefined;
+    const model = (projRow?.default_model as string) || task.model;
     const useWorktree = getMaxParallelPerProject(db) > 1;
 
     // Validate model against license limits
@@ -105,7 +107,7 @@ export async function orchestrateSddWorkflow(
         // Save short description to DB
         const proj = q.getProject.get(task.project_id) as { name: string; path: string; repo: string | null; optional_skills: string; test_command?: string } | undefined;
         if (proj) {
-          q.updateProject.run(proj.name, proj.path, proj.repo, result.shortDescription, proj.optional_skills, proj.test_command ?? '', (proj as Record<string, unknown>).code_hosting ?? null, (proj as Record<string, unknown>).code_hosting_config ?? '{}', (proj as Record<string, unknown>).plugin_pm ?? null, (proj as Record<string, unknown>).plugin_pm_config ?? '{}', (proj as Record<string, unknown>).ai_agent ?? 'claude', (proj as Record<string, unknown>).ai_agent_phases ?? '{}', task.project_id);
+          q.updateProject.run(proj.name, proj.path, proj.repo, result.shortDescription, proj.optional_skills, proj.test_command ?? '', (proj as Record<string, unknown>).code_hosting ?? null, (proj as Record<string, unknown>).code_hosting_config ?? '{}', (proj as Record<string, unknown>).plugin_pm ?? null, (proj as Record<string, unknown>).plugin_pm_config ?? '{}', (proj as Record<string, unknown>).ai_agent ?? 'claude', (proj as Record<string, unknown>).ai_agent_phases ?? '{}', (proj as Record<string, unknown>).default_model ?? 'sonnet', task.project_id);
         }
 
         sendLog(q, getWindow, taskId, projectName, 'Repo auto-analysis complete. AGENT.md created.', 'ok');
