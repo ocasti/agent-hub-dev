@@ -1,4 +1,57 @@
 import type Database from 'better-sqlite3';
+import { NON_RUNNING_STATUSES } from '../ipc/agent/types';
+
+/**
+ * SQL literal list of statuses that don't occupy a concurrency slot.
+ * Built from the shared constant so the two counters below can never disagree.
+ * Values are compile-time constants, never user input.
+ */
+const NON_RUNNING_SQL_LIST = NON_RUNNING_STATUSES.map((s) => `'${s}'`).join(', ');
+
+/**
+ * Columns `patchTask` is allowed to write. Anything not listed here is ignored,
+ * so a caller can never reach id/created_at or an arbitrary identifier.
+ */
+const PATCHABLE_TASK_COLUMNS = [
+  'title', 'description', 'acceptance_criteria', 'images', 'model', 'status',
+  'pr_number', 'review_cycle', 'spec_suggestions', 'plan_summary', 'branch_name',
+  'pm_work_item_id', 'pm_work_item_url', 'last_phase', 'worktree_path',
+  'criteria_status', 'plugin_context',
+] as const;
+
+export type PatchableTaskColumn = (typeof PATCHABLE_TASK_COLUMNS)[number];
+export type TaskPatch = Partial<Record<PatchableTaskColumn, string | number | null>>;
+
+/**
+ * Update only the given task columns, bound by name.
+ *
+ * The positional 14-argument `updateTask` statement requires every caller to
+ * re-send the whole row in exact order; three call sites had already drifted
+ * (one passed 12 values and threw at runtime). Prefer this for partial updates.
+ */
+function makeTaskPatcher(db: Database.Database) {
+  const allowed = new Set<string>(PATCHABLE_TASK_COLUMNS);
+  const cache = new Map<string, Database.Statement>();
+
+  return function patchTask(taskId: string, patch: TaskPatch): void {
+    const cols = Object.keys(patch).filter((c) => allowed.has(c));
+    if (cols.length === 0) return;
+
+    const key = cols.join(',');
+    let stmt = cache.get(key);
+    if (!stmt) {
+      const setClause = cols.map((c) => `${c}=@${c}`).join(', ');
+      stmt = db.prepare(
+        `UPDATE tasks SET ${setClause}, updated_at=CURRENT_TIMESTAMP WHERE id=@id`
+      );
+      cache.set(key, stmt);
+    }
+
+    const bind: Record<string, unknown> = { id: taskId };
+    for (const c of cols) bind[c] = patch[c as PatchableTaskColumn] ?? null;
+    stmt.run(bind);
+  };
+}
 
 export function createQueries(db: Database.Database) {
   return {
@@ -43,6 +96,7 @@ export function createQueries(db: Database.Database) {
        updated_at=CURRENT_TIMESTAMP
        WHERE id=?`
     ),
+    patchTask: makeTaskPatcher(db),
     updateTaskStatus: db.prepare(
       'UPDATE tasks SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?'
     ),
@@ -100,6 +154,7 @@ export function createQueries(db: Database.Database) {
     getAllKnowledge: db.prepare(
       'SELECT * FROM knowledge_entries ORDER BY created_at DESC'
     ),
+    getKnowledgeById: db.prepare('SELECT * FROM knowledge_entries WHERE id = ?'),
     getKnowledgeByProject: db.prepare(
       'SELECT * FROM knowledge_entries WHERE project_id = ? OR project_id IS NULL ORDER BY severity, created_at DESC'
     ),
@@ -115,16 +170,19 @@ export function createQueries(db: Database.Database) {
       'UPDATE knowledge_entries SET times_applied = times_applied + 1 WHERE id = ?'
     ),
 
-    // Active task count (for concurrency control)
+    // Active task count (for concurrency control).
+    // Both counters derive from NON_RUNNING_STATUSES so they can't drift apart —
+    // 'push_review' used to be missing here, so a task paused awaiting push approval
+    // silently consumed a global concurrency slot.
     getActiveTaskCount: db.prepare(
-      `SELECT COUNT(*) as count FROM tasks WHERE status NOT IN ('queued', 'completed', 'failed', 'pr_feedback', 'spec_feedback', 'plan_review', 'test_fixing')`
+      `SELECT COUNT(*) as count FROM tasks WHERE status NOT IN (${NON_RUNNING_SQL_LIST})`
     ),
 
     // Running task count per project (1 actively executing task per project)
     // Counts only tasks that are RUNNING (not paused states like plan_review, spec_feedback, pr_feedback)
     // Second param excludes a specific task ID (so a task doesn't block itself)
     getRunningTaskCountByProject: db.prepare(
-      `SELECT COUNT(*) as count FROM tasks WHERE project_id = ? AND id != ? AND status NOT IN ('queued', 'completed', 'failed', 'pr_feedback', 'spec_feedback', 'plan_review', 'push_review', 'test_fixing')`
+      `SELECT COUNT(*) as count FROM tasks WHERE project_id = ? AND id != ? AND status NOT IN (${NON_RUNNING_SQL_LIST})`
     ),
 
     // Project knowledge (for prompt injection)

@@ -1,5 +1,5 @@
 import { config as dotenvConfig } from 'dotenv';
-import { app, BrowserWindow, ipcMain, Menu, protocol, net } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, protocol, net, shell } from 'electron';
 import path from 'path';
 import { execFileSync } from 'child_process';
 
@@ -14,10 +14,11 @@ import { registerSkillsHandlers } from './ipc/skills';
 import { registerKnowledgeHandlers } from './ipc/knowledge';
 import { registerDialogHandlers } from './ipc/dialog';
 import { registerPluginHandlers } from './ipc/plugins/index';
-import { registerLicenseHandlers } from './ipc/license';
+import { registerLicenseHandlers, validateLicense } from './ipc/license';
 import { registerUpdateHandlers } from './ipc/updates';
 import { registerNotificationHandlers, initNotifications } from './ipc/notifications';
 import { cleanOrphanWorktrees } from './ipc/agent/worktree';
+import { shutdownAllAgents, reconcileInFlightTasks } from './ipc/agent/state';
 import i18nMain from './i18n/index';
 
 // ── Fix PATH for desktop apps launched from GUI ─────────────────────────────────
@@ -56,6 +57,15 @@ if ((process.platform === 'darwin' || process.platform === 'linux') && !process.
 }
 
 const APP_NAME = 'Agent Hub';
+
+/** Protocol of a URL, or '' when it doesn't parse. Never throws. */
+function safeProtocol(url: string): string {
+  try {
+    return new URL(url).protocol;
+  } catch {
+    return '';
+  }
+}
 
 // Set app name early so macOS dock and Cmd+Tab show "Agent Hub" instead of "Electron"
 app.setName(APP_NAME);
@@ -153,10 +163,26 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
     },
     titleBarStyle: 'hiddenInset',
     backgroundColor: '#111827',
     show: false,
+  });
+
+  // The renderer holds a bridge to ~80 IPC methods, several of which spawn
+  // processes. Deny new windows and in-place navigation so a hostile string
+  // rendered into the DOM (a PR comment, a PM field) can't pivot the window to
+  // remote content that keeps that bridge.
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:$/.test(safeProtocol(url))) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const devServer = process.env.VITE_DEV_SERVER_URL;
+    const isAppUrl = url.startsWith('file://') || (devServer && url.startsWith(devServer));
+    if (!isAppUrl) event.preventDefault();
   });
 
   if (process.env.VITE_DEV_SERVER_URL) {
@@ -236,7 +262,7 @@ app.whenReady().then(() => {
   registerTaskHandlers(ipcMain, db);
   registerAgentHandlers(ipcMain, db, () => mainWindow);
   registerGithubHandlers(ipcMain);
-  registerSkillsHandlers(ipcMain);
+  registerSkillsHandlers(ipcMain, db);
   registerKnowledgeHandlers(ipcMain, db);
   registerDialogHandlers(ipcMain, () => mainWindow);
   registerPluginHandlers(ipcMain, db);
@@ -249,18 +275,29 @@ app.whenReady().then(() => {
   // App version
   ipcMain.handle('app:getVersion', () => app.getVersion());
 
+  // Requeue tasks left mid-flight by a crash or a quit during a phase.
+  // Their orchestration is gone but their status still reads as running, so the
+  // concurrency counter treats them as occupying a slot forever — with
+  // maxConcurrent = 1 that permanently blocks the queue.
+  console.log('[startup] reconciling in-flight tasks...');
+  try {
+    const reconciled = reconcileInFlightTasks(db);
+    if (reconciled > 0) console.log(`[startup] requeued ${reconciled} interrupted task(s)`);
+  } catch (err) { console.error('[startup] reconcileInFlightTasks error:', err); }
+
   // Clean orphan worktrees from previous sessions
   console.log('[startup] cleaning orphan worktrees...');
   try { cleanOrphanWorktrees(db); } catch (err) { console.error('[startup] cleanOrphanWorktrees error:', err); }
   console.log(`[startup] worktree cleanup done (${Date.now() - t0}ms)`);
 
-  // Background license validation 3s after window creation
+  // Background license validation 3s after window creation.
+  // Calls the function directly: `ipcMain.emit` does not invoke an `ipcMain.handle`
+  // handler, so this check silently never ran.
   setTimeout(() => {
     try {
       const licenseKey = db.prepare('SELECT value FROM settings WHERE key = ?').get('license_key') as { value: string } | undefined;
       if (licenseKey?.value) {
-        // Trigger non-blocking validation
-        ipcMain.emit('license:validate');
+        validateLicense(db).catch((err) => console.error('[startup] license validation failed:', err));
       }
     } catch { /* ignore */ }
   }, 3000);
@@ -287,6 +324,13 @@ app.whenReady().then(() => {
       createWindow();
     }
   });
+});
+
+// Terminate agent subprocesses before the app goes away. Agents run with
+// permissive tool access; an orphaned one keeps editing the user's repository
+// unsupervised after Agent Hub has exited.
+app.on('before-quit', () => {
+  try { shutdownAllAgents(); } catch (err) { console.error('[shutdown] shutdownAllAgents error:', err); }
 });
 
 app.on('window-all-closed', () => {

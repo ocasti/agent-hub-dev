@@ -31,7 +31,9 @@ export function buildPhasePrompt(
   reviewLoop?: number,
   useSpeckit?: boolean,
   enrichment?: Record<string, unknown>,
-  subtasks?: { description: string; completed: boolean }[]
+  subtasks?: { description: string; completed: boolean }[],
+  /** Ship phase: provider-specific PR command, from the project's code hosting adapter. */
+  ship?: { prCreateCommand: string; prTerm: string }
 ): string {
   const criteriaText = buildCriteriaSection(criteria);
 
@@ -260,7 +262,9 @@ note: Implemented via UserService.validate() with input sanitization
 You MUST report a [CRITERION_STATUS] block for EVERY acceptance criterion.` : ''}`;
     }
 
-    case 4: // Ship — no spec/knowledge needed, agent reads diff for PR description
+    case 4: { // Ship — no spec/knowledge needed, agent reads diff for PR description
+      const prCreateCommand = ship?.prCreateCommand || 'gh pr create';
+      const prTerm = ship?.prTerm || 'Pull Request';
       return `You are an SDD agent shipping code. You MUST use your Bash tool to execute git commands.
 
 ### Task: ${task.title}
@@ -273,7 +277,7 @@ You are already on the feature branch \`${task.branch_name || 'feature/<NNNN-nam
 3. **Stage all changes**: \`git add -A\`
 4. **Create a conventional commit**: \`git commit -m "feat(scope): description"\` — use the task title as reference
 5. **Push** the branch to origin: \`git push -u origin HEAD\`
-6. **Create a Pull Request** using \`gh pr create\` with a detailed body. The PR must include:
+6. **Create a ${prTerm}** using \`${prCreateCommand}\` with a detailed body. It must include:
 
 ### PR Title
 Concise title matching the task (e.g. "feat(security): harden AJAX endpoints with nonce verification")
@@ -305,9 +309,10 @@ IMPORTANT: Do NOT create a new branch — you are already on the correct feature
 Use your Bash tool to execute all git commands. Read the diff carefully to write an accurate PR description — do NOT guess what changed.
 
 ## Required Output Format
-After creating the PR, include these markers:
-\`[PR_NUMBER:123]\` (the actual PR number)
-\`[BRANCH:${task.branch_name || 'feature/...'}\`] (the actual branch name)`;
+After creating the ${prTerm}, include these markers:
+\`[PR_NUMBER:123]\` (the actual number)
+\`[BRANCH:${task.branch_name || 'feature/...'}]\` (the actual branch name)`;
+    }
 
     default:
       return `## Task: ${task.title}\n\n${task.description}`;

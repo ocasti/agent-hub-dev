@@ -1,8 +1,9 @@
 import { spawn, type ChildProcess } from 'child_process';
 import { v4 as uuidv4 } from 'uuid';
 import type { TaskRow } from '../types';
-import { sendLog } from '../state';
+import { sendLog, registerChild, unregisterChild, terminateChild } from '../state';
 import { execFileAsync } from '../claude-cli';
+import { verdictRegion } from '../output-parser';
 import type { AgentAdapter, AgentRunOptions, AgentRunResult, GenericAgentDef } from './types';
 
 // ── SDD Output Markers ───────────────────────────────────────────────────────
@@ -23,9 +24,14 @@ const SDD_OUTPUT_MARKERS = [
 /**
  * Check if agent output contains valid SDD markers, indicating the agent
  * completed meaningful work despite a non-zero exit code.
+ *
+ * Only the tail is examined. Agents echo the "Required Output Format" section of
+ * the prompt — which lists every marker verbatim — so scanning the full transcript
+ * turned a crash that had merely repeated its instructions into a reported success.
  */
 function outputContainsSddMarkers(output: string): boolean {
-  return SDD_OUTPUT_MARKERS.some((marker) => output.includes(marker));
+  const tail = verdictRegion(output);
+  return SDD_OUTPUT_MARKERS.some((marker) => tail.includes(marker));
 }
 
 /**
@@ -98,7 +104,13 @@ export class GenericAdapter implements AgentAdapter {
         stdio: ['pipe', 'pipe', 'pipe'],
       });
 
+      registerChild(child);
+
       if (this.def.stdinPrompt) {
+        // See claude-adapter: an unhandled EPIPE here takes down the main process.
+        child.stdin?.on('error', (err: Error) => {
+          sendLog(q, getWindow, taskId, projectName, `Agent stdin error: ${err.message}`, 'error');
+        });
         child.stdin?.write(prompt);
         child.stdin?.end();
       }
@@ -111,7 +123,7 @@ export class GenericAdapter implements AgentAdapter {
         timedOut = true;
         sendLog(q, getWindow, taskId, projectName,
           `Phase timed out after ${Math.round(timeoutMs / 60000)} minutes. Killing process.`, 'error');
-        child.kill('SIGTERM');
+        terminateChild(child);
       }, timeoutMs);
 
       child.stdout?.on('data', (data: Buffer) => {
@@ -134,6 +146,7 @@ export class GenericAdapter implements AgentAdapter {
 
       child.on('close', (code: number | null) => {
         clearTimeout(timeout);
+        unregisterChild(child);
         const rawCode = code ?? 1;
 
         // ── Exit code interpretation for non-Claude agents ──
@@ -188,6 +201,7 @@ export class GenericAdapter implements AgentAdapter {
 
       child.on('error', (err: Error) => {
         clearTimeout(timeout);
+        unregisterChild(child);
         if (taskId) q.finishAgentRun.run('error', output, err.message, runId);
         sendLog(q, getWindow, taskId, projectName, `Spawn error: ${err.message}`, 'error');
         reject(err);
@@ -195,7 +209,7 @@ export class GenericAdapter implements AgentAdapter {
 
       const onAbort = () => {
         clearTimeout(timeout);
-        child.kill('SIGTERM');
+        terminateChild(child);
         const err = new Error('Aborted');
         err.name = 'AbortError';
         reject(err);

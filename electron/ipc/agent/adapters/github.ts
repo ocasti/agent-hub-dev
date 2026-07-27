@@ -33,6 +33,8 @@ export class GitHubAdapter implements CodeHostingAdapter {
   readonly id = 'github';
   readonly name = 'GitHub';
   readonly cli = 'gh';
+  readonly prCreateCommand = 'gh pr create';
+  readonly prTerm = 'Pull Request';
 
   buildEnvVars(credentials: CodeHostingCredentials): CodeHostingEnvVars {
     const env: CodeHostingEnvVars = {};

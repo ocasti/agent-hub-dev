@@ -117,7 +117,10 @@ export default function TaskDetail({
 
   const isEditable = ['queued', 'pr_feedback', 'completed', 'spec_feedback', 'test_fixing'].includes(task.status);
   const isRunning = !['queued', 'completed', 'failed', 'pr_feedback', 'spec_feedback', 'plan_review', 'push_review', 'test_fixing'].includes(task.status);
-  const taskLogs = logs.filter((l) => l.projectName === task.projectName).slice(0, 30);
+  // Filter by task, not by project: with parallel worktrees two tasks in the same
+  // project run at once, and filtering by project name interleaved both of their
+  // phase output in each detail panel.
+  const taskLogs = logs.filter((l) => l.taskId === task.id).slice(0, 30);
 
   return (
     <div className="space-y-5 w-full">

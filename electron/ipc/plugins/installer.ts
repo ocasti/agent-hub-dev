@@ -7,7 +7,7 @@ import { execFile } from 'child_process';
 import * as tar from 'tar';
 import { satisfies } from 'semver';
 import type { ConfigField, InstalledPlugin, PluginManifest, PluginSetup, CatalogPlugin } from './types';
-import { getInstalledPlugins, saveInstalledPlugins, loadPluginManifest, loadPluginWorkflow } from './loader';
+import { getInstalledPlugins, saveInstalledPlugins, loadPluginManifest, loadPluginWorkflow, assertValidPluginId } from './loader';
 
 /**
  * Resolve the path to a bundled plugin directory.
@@ -122,7 +122,7 @@ export async function installPlugin(
     throw new Error(`Plugin "${pluginId}" is already installed`);
   }
 
-  const pluginDir = join(app.getPath('home'), '.config', 'agent-hub', 'plugins', pluginId);
+  const pluginDir = join(app.getPath('home'), '.config', 'agent-hub', 'plugins', assertValidPluginId(pluginId));
   if (!existsSync(pluginDir)) {
     mkdirSync(pluginDir, { recursive: true });
   }
@@ -196,11 +196,26 @@ export async function updatePluginConfig(
     throw new Error(`Plugin "${pluginId}" is not installed`);
   }
 
-  plugin.config = { ...plugin.config, ...config };
+  // `plugins:list` masks secrets before handing config to the UI, and the config
+  // form seeds its fields from that masked copy. Saving after editing an unrelated
+  // field therefore sent "••••••abc" back and overwrote the real token, silently
+  // breaking Ship-phase authentication. Treat a still-masked value as "unchanged".
+  const incoming: Record<string, string> = {};
+  for (const [key, value] of Object.entries(config)) {
+    if (isMaskedSecret(value) && plugin.config?.[key]) continue;
+    incoming[key] = value;
+  }
+
+  plugin.config = { ...plugin.config, ...incoming };
   if (pluginId === 'slack') {
     plugin.config = normalizeSlackPluginConfig(plugin.config);
   }
   saveInstalledPlugins(installed);
+}
+
+/** True when a value is the placeholder `plugins:list` substitutes for a secret. */
+export function isMaskedSecret(value: unknown): boolean {
+  return typeof value === 'string' && /^•{6}/.test(value);
 }
 
 // ── Plugin Compatibility ─────────────────────────────────────────────────────────
@@ -342,7 +357,7 @@ export async function installBundledPlugin(
     throw new Error(`Bundled plugin "${pluginId}" not found`);
   }
 
-  const pluginDir = join(app.getPath('home'), '.config', 'agent-hub', 'plugins', pluginId);
+  const pluginDir = join(app.getPath('home'), '.config', 'agent-hub', 'plugins', assertValidPluginId(pluginId));
 
   // If already installed, uninstall first
   const installed = getInstalledPlugins();
@@ -441,7 +456,7 @@ export async function installPluginFromDisk(
   }
 
   const pluginId = manifest.id;
-  const pluginDir = join(app.getPath('home'), '.config', 'agent-hub', 'plugins', pluginId);
+  const pluginDir = join(app.getPath('home'), '.config', 'agent-hub', 'plugins', assertValidPluginId(pluginId));
 
   // If already installed, uninstall old version first
   const installed = getInstalledPlugins();
@@ -549,7 +564,7 @@ export async function downloadAndInstallPlugin(
   catalogEntry: CatalogPlugin,
   config: Record<string, string>
 ): Promise<void> {
-  const pluginDir = join(app.getPath('home'), '.config', 'agent-hub', 'plugins', catalogEntry.id);
+  const pluginDir = join(app.getPath('home'), '.config', 'agent-hub', 'plugins', assertValidPluginId(catalogEntry.id));
   const tempPath = join(tmpdir(), `agent-hub-plugin-${catalogEntry.id}-${Date.now()}.tar.gz`);
 
   // If already installed with different version, uninstall first (preserves config)

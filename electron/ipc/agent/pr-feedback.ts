@@ -6,12 +6,12 @@ import { runAgentPhase } from './agents';
 import { readAgentMd } from './repo-analysis';
 import { parsePhaseOutput, saveKnowledgeEntries } from './output-parser';
 import { buildSingleThreadPrompt } from './prompt-builder';
-import { commitWipIfDirty, getDefaultBranch } from './git-ops';
+import { commitWipIfDirty, getDefaultBranch, squashAndPush, commitAllIfStaged } from './git-ops';
 import { removeWorktree } from './worktree';
 import { runNativeTests, detectTestCommand } from './test-runner';
 import { fireHook } from '../plugins/engine';
 import type { HookContext } from '../plugins/types';
-import { resolveEnvVars, getProjectAdapter } from './adapters/registry';
+import { resolveEnvVars, resolveAgentEnvVars, getProjectAdapter } from './adapters/registry';
 import type { CodeHostingAdapter } from './adapters/types';
 import { sendNotification } from '../notifications';
 import type { CICheckResult } from './types';
@@ -44,6 +44,7 @@ export async function runFetchAndFix(
 
     // Resolve code hosting env vars and adapter for all subprocess calls
     const extraEnv = resolveEnvVars(task.project_id, db);
+    const agentEnv = resolveAgentEnvVars(task.project_id, db);
     const adapter = getProjectAdapter(task.project_id, db);
     if (!adapter) throw new Error('No code hosting adapter configured for this project');
 
@@ -96,16 +97,15 @@ export async function runFetchAndFix(
     } catch { /* tag didn't exist */ }
     // Tag will be created after we know the thread count (below)
 
+    // Resolve the repo's actual default branch once; the hardcoded
+    // main/master/develop list silently produced no history (and so no regression
+    // context) on repos whose default is trunk, production, etc.
+    const baseBranch = await getDefaultBranch(workDir, extraEnv).catch(() => 'main');
+
     // Get branch commit history for regression prevention across cycles
     let branchHistory = '';
     try {
-      // Try common base branches to get the full commit log of this feature branch
-      for (const base of ['main', 'master', 'develop']) {
-        try {
-          branchHistory = (await execFileAsync('git', ['log', '--oneline', `${base}..HEAD`], workDir, 10000, false, extraEnv)).trim();
-          if (branchHistory) break;
-        } catch { /* try next base */ }
-      }
+      branchHistory = (await execFileAsync('git', ['log', '--oneline', `${baseBranch}..HEAD`], workDir, 10000, false, extraEnv)).trim();
     } catch { /* ignore — branchHistory stays empty */ }
 
     // Capture baseline diff size for post-fix validation
@@ -300,12 +300,7 @@ export async function runFetchAndFix(
     // Get list of files modified in this PR for scope enforcement
     let prFiles = '';
     try {
-      for (const base of ['main', 'master', 'develop']) {
-        try {
-          prFiles = (await execFileAsync('git', ['diff', '--name-only', `${base}...HEAD`], workDir, 10000, false, extraEnv)).trim();
-          if (prFiles) break;
-        } catch { /* try next */ }
-      }
+      prFiles = (await execFileAsync('git', ['diff', '--name-only', `${baseBranch}...HEAD`], workDir, 10000, false, extraEnv)).trim();
     } catch { /* ignore */ }
 
     if (totalItems === 0) {
@@ -341,7 +336,7 @@ export async function runFetchAndFix(
         content: feedback.generalComments,
       }, undefined, branchHistory, prFiles, ciFailureLogs);
       const { output, exitCode } = await runAgentPhase(db, task.project_id, 5, {
-        projectPath: workDir, model, prompt, taskId, q, getWindow, controller, timeoutMs: 600000, extraEnv,
+        projectPath: workDir, model, prompt, taskId, q, getWindow, controller, timeoutMs: 600000, extraEnv: agentEnv,
       });
       if (exitCode !== 0) {
         sendLog(q, getWindow, taskId, projectName, 'Warning: Failed to process general comments. Continuing...', 'error');
@@ -403,7 +398,7 @@ export async function runFetchAndFix(
         thread,
       }, previousActions, branchHistory, prFiles, ciFailureLogs);
       const { output, exitCode } = await runAgentPhase(db, task.project_id, 5, {
-        projectPath: workDir, model, prompt, taskId, q, getWindow, controller, timeoutMs: 600000, extraEnv,
+        projectPath: workDir, model, prompt, taskId, q, getWindow, controller, timeoutMs: 600000, extraEnv: agentEnv,
       });
 
       if (exitCode !== 0) {
@@ -473,15 +468,7 @@ export async function runFetchAndFix(
       const actionSummary = replyText.length > 120 ? replyText.substring(0, 120) + '...' : replyText;
       threadSummaries.push(`- ${threadLabel}: ${action}${actionSummary ? ' — ' + actionSummary : ''}`);
       const commitMsg = `fix(pr-review): ${threadLabel} [${action}]`;
-      const commitPrompt = `Run these commands using your Bash tool. Do NOT modify any files:
-1. git add -A
-2. git diff --cached --stat
-3. If there are staged changes: git commit -m "${commitMsg}"
-4. If no changes: output "No changes to commit"
-Do NOT push yet.`;
-      await runAgentPhase(db, task.project_id, 5, {
-        projectPath: workDir, model, prompt: commitPrompt, taskId, q, getWindow, controller, timeoutMs: 60000, extraEnv,
-      });
+      await commitAllIfStaged(workDir, commitMsg, taskId, projectName, q, getWindow, extraEnv);
 
       // Accumulate action for context in subsequent threads
       previousActions.push(`[${action.toUpperCase()}] ${threadLabel}: ${replyText.length > 200 ? replyText.substring(0, 200) + '...' : replyText}`);
@@ -578,7 +565,7 @@ ${testResult.output}
 Fix the test failures and ensure all tests pass. Only modify test files or the minimal code needed to fix the failures.`;
 
         await runAgentPhase(db, task.project_id, 5, {
-          projectPath: workDir, model, prompt: fixPrompt, taskId, q, getWindow, controller, timeoutMs: 600000, extraEnv,
+          projectPath: workDir, model, prompt: fixPrompt, taskId, q, getWindow, controller, timeoutMs: 600000, extraEnv: agentEnv,
         });
 
         // Re-run native tests
@@ -634,7 +621,7 @@ ${latestTestResult.output}
 
 Fix the test failures and ensure all tests pass.`;
           await runAgentPhase(db, task.project_id, 5, {
-            projectPath: workDir, model, prompt: retryFixPrompt, taskId, q, getWindow, controller, timeoutMs: 600000, extraEnv,
+            projectPath: workDir, model, prompt: retryFixPrompt, taskId, q, getWindow, controller, timeoutMs: 600000, extraEnv: agentEnv,
           });
 
           const postFixResult = await runNativeTests(workDir, testCmd, taskId, projectName, q, getWindow, testTimeoutMs);
@@ -708,10 +695,20 @@ Fix the test failures and ensure all tests pass.`;
         pushApproved = true;
         await fireHook('on:pr_approved', { ...hookCtx, phase: 5, phaseLabel: 'pr_feedback', prNumber: task.pr_number || undefined }, db);
       } else if (decision.action === 'reject') {
-        sendLog(q, getWindow, taskId, projectName, 'Push rejected by user. Discarding local changes.', 'info');
+        sendLog(q, getWindow, taskId, projectName, 'Push rejected by user. Reverting tracked changes.', 'info');
         try {
+          // Only revert tracked files. `git clean -fd` used to run here, but when the
+          // task has no worktree, workDir is the user's own project directory — it
+          // deleted every untracked file they had, including local .env files.
           await execFileAsync('git', ['checkout', '.'], workDir, 10000, false, extraEnv);
-          await execFileAsync('git', ['clean', '-fd'], workDir, 10000, false, extraEnv);
+          const untracked = (await execFileAsync(
+            'git', ['ls-files', '--others', '--exclude-standard'], workDir, 10000, false, extraEnv
+          )).trim();
+          if (untracked) {
+            sendLog(q, getWindow, taskId, projectName,
+              `Note: ${untracked.split('\n').length} untracked file(s) were left in place. Remove them manually if the agent created them.`,
+              'info');
+          }
         } catch { /* ignore */ }
         q.updateTaskStatus.run('pr_feedback', taskId);
         sendPhaseUpdate(getWindow, { taskId, phase: 5, phaseLabel: 'pr_feedback', status: 'completed' });
@@ -726,7 +723,7 @@ Fix the test failures and ensure all tests pass.`;
         });
         const revisionPrompt = `The user reviewed the PR fixes before pushing and requested the following revision:\n\n${decision.prompt}\n\nApply the requested changes. Only modify files that are part of this PR.`;
         await runAgentPhase(db, task.project_id, 5, {
-          projectPath: workDir, model, prompt: revisionPrompt, taskId, q, getWindow, controller, timeoutMs: 600000, extraEnv,
+          projectPath: workDir, model, prompt: revisionPrompt, taskId, q, getWindow, controller, timeoutMs: 600000, extraEnv: agentEnv,
         });
 
         // Update summary and pause again
@@ -763,17 +760,11 @@ Fix the test failures and ensure all tests pass.`;
       subProgress: { current: totalItems, total: totalItems, label: 'Push', step: 'Squash & Push' },
     });
     const newCycleNum = task.review_cycle + 1;
-    const squashBody = threadSummaries.join('\\n');
-    const squashMsg = `fix: address PR review feedback (cycle ${newCycleNum})\\n\\n${squashBody}`;
-    const squashAndPushPrompt = `Run these commands using your Bash tool. Do NOT modify any files:
-1. Count how many commits are ahead of origin: git rev-list --count origin/${task.branch_name}..HEAD
-2. If count > 1: git reset --soft origin/${task.branch_name} && git commit -m "${squashMsg}"
-3. If count is 1: git commit --amend -m "${squashMsg}"
-4. If count is 0: output "No commits to squash"
-5. git push --force-with-lease`;
-    await runAgentPhase(db, task.project_id, 5, {
-      projectPath: workDir, model, prompt: squashAndPushPrompt, taskId, q, getWindow, controller, timeoutMs: 120000, extraEnv,
-    });
+    const squashBody = threadSummaries.join('\n');
+    const squashMsg = `fix: address PR review feedback (cycle ${newCycleNum})\n\n${squashBody}`;
+    await squashAndPush(
+      workDir, task.branch_name as string, squashMsg, taskId, projectName, q, getWindow, extraEnv
+    );
 
     // Minimize current cycle reviews + delete old cycle reviews
     await adapter.minimizeOldCommentsFull(
@@ -832,30 +823,31 @@ export async function runFetchAndFixPushOnly(
 
     // Resolve code hosting env vars and adapter for subprocess calls
     const extraEnv = resolveEnvVars(task.project_id, db);
+    const agentEnv = resolveAgentEnvVars(task.project_id, db);
     const adapter = getProjectAdapter(task.project_id, db);
     if (!adapter) throw new Error('No code hosting adapter configured for this project');
     const env = extraEnv || {};
 
-    // Resolve all unresolved threads before pushing (deferred data was lost)
+    // This path runs when the app restarted mid-cycle, so the per-thread verdicts
+    // (which threads were fixed, which were rejected with justification) are gone.
+    // Resolving every open thread here would silently close human review comments
+    // that were never addressed, so we push the work and leave the threads open
+    // for the reviewer.
     sendPhaseUpdate(getWindow, {
       taskId, phase: 5, phaseLabel: 'pr_fixing', status: 'in_progress',
-      subProgress: { current: 1, total: 3, label: 'Threads', step: 'Resolving threads' },
+      subProgress: { current: 1, total: 3, label: 'Threads', step: 'Checking threads' },
     });
     try {
       const feedback = await adapter.fetchFeedbackFull(
         { projectPath, prNumber: task.pr_number as number }, env, q, getWindow, taskId, projectName
       );
       if (feedback.threads.length > 0) {
-        const threadIds = feedback.threads.map(t => t.id);
-        sendLog(q, getWindow, taskId, projectName, `Resolving ${threadIds.length} unresolved thread(s) on ${adapter.name}...`, 'info');
-        await adapter.resolveThreadsFull(
-          { projectPath, threadIds }, env, q, getWindow, taskId, projectName
-        );
-      } else {
-        sendLog(q, getWindow, taskId, projectName, 'No unresolved threads to resolve.', 'info');
+        sendLog(q, getWindow, taskId, projectName,
+          `${feedback.threads.length} thread(s) remain open — the fix cycle was interrupted, so they are left for the reviewer to close.`,
+          'info');
       }
     } catch (err) {
-      sendLog(q, getWindow, taskId, projectName, `Warning: Could not resolve threads: ${(err as Error).message}`, 'error');
+      sendLog(q, getWindow, taskId, projectName, `Warning: Could not read threads: ${(err as Error).message}`, 'error');
     }
 
     // Squash + push
@@ -866,15 +858,9 @@ export async function runFetchAndFixPushOnly(
 
     const newCycleNum = task.review_cycle + 1;
     const squashMsg = `fix: address PR review feedback (cycle ${newCycleNum})`;
-    const squashAndPushPrompt = `Run these commands using your Bash tool. Do NOT modify any files:
-1. Count how many commits are ahead of origin: git rev-list --count origin/${task.branch_name}..HEAD
-2. If count > 1: git reset --soft origin/${task.branch_name} && git commit -m "${squashMsg}"
-3. If count is 1: git commit --amend -m "${squashMsg}"
-4. If count is 0: git add -A && git commit -m "${squashMsg}" (stage any uncommitted changes)
-5. git push --force-with-lease`;
-    await runAgentPhase(db, task.project_id, 5, {
-      projectPath: workDir, model, prompt: squashAndPushPrompt, taskId, q, getWindow, controller, timeoutMs: 120000, extraEnv,
-    });
+    await squashAndPush(
+      workDir, task.branch_name as string, squashMsg, taskId, projectName, q, getWindow, extraEnv
+    );
 
     // Cleanup old reviews
     sendPhaseUpdate(getWindow, {

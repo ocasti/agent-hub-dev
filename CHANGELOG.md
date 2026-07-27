@@ -6,6 +6,54 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [Unreleased] — Stability & Security Hardening
+
+Findings from a full audit of the workflow engine, git layer, plugin system,
+database/IPC surface and frontend.
+
+### Fixed — broken behaviour
+- **Production build was failing on `main`**: `src/App.tsx` initial `Settings` was missing `tasksFilterProjects`/`tasksFilterStatuses`. Added a `typecheck` script, since the root `tsconfig.json` uses `"files": []` and a plain `tsc --noEmit` verified nothing
+- **Premium agent failover never triggered**: adapters *resolve* with a non-zero exit code on CLI failure and timeout, so the fallback (which only ran on rejection) covered just a missing binary. Failover now also handles non-zero exits, while still ignoring user aborts
+- **Editing a spec and continuing always threw**: the resume path called the 14-parameter `updateTask` with 12 values, failing the task and discarding the edited spec
+- **Ship phase hardcoded `gh pr create`** regardless of provider — Bitbucket projects tried to ship through the GitHub CLI. The command now comes from the project's adapter (`prCreateCommand`/`prTerm`)
+- **Quality gate could pass without a review passing**: verdict markers were matched anywhere in the transcript, including where agents echo the prompt's own "Required Output Format". Verdicts are now read from the tail only, and contradictory markers fail closed
+- **`knowledge:create` returned the wrong record**, looking rows up by project id instead of entry id
+- **Scheduled license revalidation never ran**: `ipcMain.emit` does not invoke an `ipcMain.handle` handler
+- **Ship with no PR number** no longer enters PR Feedback, a state the task could never leave
+- Regression context was silently empty on repos whose default branch is not main/master/develop
+- Fixed a `.then()` chained after `.catch()` that logged "Closed PR" even when closing failed
+
+### Fixed — data loss
+- **Rejecting a push ran `git clean -fd`** in the working directory — which, without a worktree, is the user's own project, deleting every untracked file including local `.env`. Now only tracked changes are reverted, and remaining untracked files are reported
+- **Editing plugin config destroyed stored tokens**: the form echoed the masked value (`••••••abc`) back and overwrote the secret. Masked values are now treated as unchanged
+- **`~/.claude/settings.json` could be wiped**: a parse failure fell back to `{}` and rewrote the file, destroying permissions, hooks and model config. Invalid JSON is now an error; writes are atomic (temp + rename) with a `.bak`
+- **The restart path bulk-resolved every open PR thread** without replies. It now pushes and leaves threads for the reviewer
+
+### Security
+- **Hosting tokens are no longer passed to AI agent subprocesses** (`resolveAgentEnvVars`); agents run shell commands over untrusted reviewer text, so a token in their environment was exfiltratable by prompt injection. Author identity is preserved
+- **Git plumbing moved out of the LLM**: squash/commit/push run via `execFile` with argv arrays (`squashAndPush`, `commitAllIfStaged`). Review text interpolated into `git commit -m "…"` prompts was a command-injection vector
+- **`validateProjectPath` was a no-op** (every absolute path passed); paths are now resolved, symlink-checked and required to be registered projects
+- Electron window hardened: `sandbox: true`, `setWindowOpenHandler` deny, `will-navigate` guard
+- `dialog:openExternal` restricted to http/https
+- Plugin ids validated before use as a path segment (uninstall does a recursive delete on that directory)
+- MCP requests now time out after 30s; a hung server could freeze a blocking hook forever
+
+### Stability
+- **Process supervisor**: agent subprocesses are tracked and terminated on quit (SIGTERM then SIGKILL) instead of being orphaned mid-edit; stdin errors are handled so an EPIPE can't take down the main process
+- **Startup reconciliation** requeues tasks left mid-flight by a crash, which previously consumed a concurrency slot forever
+- **Re-entrancy guard** on `agent:run`: a duplicate start overwrote the AbortController, making the first run unstoppable while two agents shared a working directory
+- `push_review` no longer counts toward the global concurrency limit
+- Malformed JSON in a single row no longer blanks entire views (`safeJsonParse`)
+- Task activity log filters by task id, not project name — parallel tasks interleaved their output
+- Failed start/push actions now surface an error instead of silently doing nothing
+
+### Changed
+- Added `patchTask`, a named-parameter task update, replacing positional 14-argument calls whose call sites had drifted
+- Task status taxonomy (`RUNNING_STATUSES`, `PAUSED_STATUSES`, `NON_RUNNING_STATUSES`) centralised in one place instead of being inlined in several queries and components
+- Added regression tests for verdict parsing and `patchTask` (68 tests, up from 55)
+
+---
+
 ## [2.5.0] — 2026-03-11 — Strict Multi-Agent Resolution & Project-Level Model
 
 ### Added

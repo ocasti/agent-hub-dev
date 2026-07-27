@@ -191,29 +191,50 @@ export async function runAgentPhase(
     ? { ...options, prompt: primary.transformPrompt(options.prompt, phase) }
     : options;
 
+  // Run the fallback agent, or surface `reason` if there is no usable fallback.
+  // Returning `null` means "no failover happened" so the caller keeps its own result.
+  const tryFallback = async (reason: string): Promise<AgentRunResult | null> => {
+    if (!fallback) return null;
+    const fallbackInstalled = await fallback.checkInstalled();
+    if (!fallbackInstalled) {
+      sendLog(options.q, options.getWindow, options.taskId, projectName,
+        `Primary agent (${primary.name}) failed and fallback (${fallback.name}) is not installed.`, 'error');
+      return null;
+    }
+    sendLog(options.q, options.getWindow, options.taskId, projectName,
+      `Primary agent (${primary.name}) failed: ${reason}. Switching to fallback: ${fallback.name}`, 'info');
+    const fallbackOptions = fallback.transformPrompt
+      ? { ...options, prompt: fallback.transformPrompt(options.prompt, phase) }
+      : options;
+    return fallback.runPhase(fallbackOptions);
+  };
+
+  let result: AgentRunResult;
   try {
-    return await primary.runPhase(transformedOptions);
+    result = await primary.runPhase(transformedOptions);
   } catch (err) {
     // Don't failover on abort
     if ((err as Error).name === 'AbortError') throw err;
-
-    if (fallback) {
-      // Verify fallback is installed before attempting
-      const fallbackInstalled = await fallback.checkInstalled();
-      if (!fallbackInstalled) {
-        sendLog(options.q, options.getWindow, options.taskId, projectName,
-          `Primary agent (${primary.name}) failed and fallback (${fallback.name}) is not installed.`, 'error');
-        throw err;
-      }
-      sendLog(options.q, options.getWindow, options.taskId, projectName,
-        `Primary agent (${primary.name}) failed: ${(err as Error).message}. Switching to fallback: ${fallback.name}`, 'info');
-      const fallbackOptions = fallback.transformPrompt
-        ? { ...options, prompt: fallback.transformPrompt(options.prompt, phase) }
-        : options;
-      return await fallback.runPhase(fallbackOptions);
-    }
+    const recovered = await tryFallback((err as Error).message);
+    if (recovered) return recovered;
     throw err;
   }
+
+  // Adapters resolve (not reject) on CLI failure and timeout — spawn errors are the
+  // only rejection. Without this branch the fallback would only ever cover a missing
+  // binary, never the rate-limit / expired-auth / timeout cases it exists for.
+  if (result.exitCode !== 0) {
+    if (controllerAborted(options)) return result;
+    const recovered = await tryFallback(`exited with code ${result.exitCode}`);
+    if (recovered) return recovered;
+  }
+
+  return result;
+}
+
+/** True when the user stopped the task — a non-zero exit is expected, don't fail over. */
+function controllerAborted(options: AgentRunOptions): boolean {
+  return options.controller?.signal.aborted === true;
 }
 
 // ── Auto-register all built-in agents ───────────────────────────────────────────

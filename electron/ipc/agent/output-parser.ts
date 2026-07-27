@@ -3,12 +3,29 @@ import type { ParsedResult, Queries } from './types';
 
 // ── Output Parsers ─────────────────────────────────────────────────────────────
 
+/**
+ * How much of the tail of a transcript counts as the agent's verdict.
+ *
+ * Phase prompts ask for the verdict marker at the very end. Scanning the whole
+ * transcript for it makes any mention a verdict — and agents routinely restate
+ * their instructions ("I'll finish with [REVIEW_PASS] once tests are green"),
+ * which passed the quality gate without a review ever passing.
+ */
+const VERDICT_TAIL_CHARS = 4000;
+
+export function verdictRegion(output: string): string {
+  return output.length > VERDICT_TAIL_CHARS ? output.slice(-VERDICT_TAIL_CHARS) : output;
+}
+
 export function parsePhaseOutput(phase: number, output: string): ParsedResult {
   const result: ParsedResult = {};
+  const verdict = verdictRegion(output);
 
   if (phase === 0) {
-    result.specOk = output.includes('[SPEC_OK]');
-    result.specIncomplete = output.includes('[SPEC_INCOMPLETE]');
+    result.specIncomplete = verdict.includes('[SPEC_INCOMPLETE]');
+    // A transcript claiming both is ambiguous; treat "needs input" as the safe
+    // reading so the user gets to review rather than the workflow charging ahead.
+    result.specOk = verdict.includes('[SPEC_OK]') && !result.specIncomplete;
     result.suggestions = [];
     const suggestionRegex = /\[SUGGESTION\]\s*(.+)/g;
     let match;
@@ -18,8 +35,10 @@ export function parsePhaseOutput(phase: number, output: string): ParsedResult {
   }
 
   if (phase === 3) {
-    result.reviewPass = output.includes('[REVIEW_PASS]');
-    result.reviewIssues = output.includes('[REVIEW_ISSUES]');
+    result.reviewIssues = verdict.includes('[REVIEW_ISSUES]');
+    // Issues win over pass: agents often list problems and still sign off. Failing
+    // closed sends the task through another fix loop instead of shipping the issues.
+    result.reviewPass = verdict.includes('[REVIEW_PASS]') && !result.reviewIssues;
     result.issues = [];
     const issueRegex = /\[ISSUE\]\s*(\w+):\s*(.+)/g;
     let match;

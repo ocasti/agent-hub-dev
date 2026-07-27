@@ -119,6 +119,36 @@ export function resolveEnvVars(
 }
 
 /**
+ * Env var names that carry a hosting credential rather than an identity.
+ * Anything matching these is withheld from AI agent subprocesses.
+ */
+const CREDENTIAL_ENV_PATTERN = /(TOKEN|PASSWORD|SECRET|API_KEY|APIKEY|CREDENTIAL)/i;
+
+/**
+ * Same as `resolveEnvVars` but with credentials stripped, for subprocesses that
+ * run an AI agent.
+ *
+ * The agent executes arbitrary shell commands while processing untrusted text
+ * (PR comments, issue bodies), so a hosting token in its environment is
+ * exfiltratable by prompt injection. Author identity (GIT_AUTHOR_NAME, etc.) is
+ * preserved because commits made by the agent still need to be attributed.
+ */
+export function resolveAgentEnvVars(
+  projectId: string,
+  db: Database.Database
+): CodeHostingEnvVars | undefined {
+  const env = resolveEnvVars(projectId, db);
+  if (!env) return undefined;
+
+  const safe: CodeHostingEnvVars = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (CREDENTIAL_ENV_PATTERN.test(key)) continue;
+    safe[key] = value;
+  }
+  return safe;
+}
+
+/**
  * Get the adapter for a project's active code hosting plugin.
  * Returns undefined if no code hosting plugin is active or installed.
  */

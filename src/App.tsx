@@ -35,7 +35,7 @@ export default function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [logs, setLogs] = useState<Log[]>([]);
-  const [settings, setSettings] = useState<Settings>({ maxConcurrent: 3, defaultModel: 'sonnet', defaultAiAgent: 'claude', maxReviewLoops: 5, theme: 'light', locale: 'en', threadMaxFiles: 5, threadMaxLines: 150, postFixLinesPerComment: 50, postFixFilesPerComment: 3, testTimeoutMin: 5, testFixRetries: 3 });
+  const [settings, setSettings] = useState<Settings>({ maxConcurrent: 3, defaultModel: 'sonnet', defaultAiAgent: 'claude', maxReviewLoops: 5, theme: 'light', locale: 'en', threadMaxFiles: 5, threadMaxLines: 150, postFixLinesPerComment: 50, postFixFilesPerComment: 3, testTimeoutMin: 5, testFixRetries: 3, tasksFilterProjects: [], tasksFilterStatuses: [] });
   const [agents, setAgents] = useState<Map<string, ActiveAgent>>(new Map());
   const [confirm, setConfirm] = useState<ConfirmState>(CONFIRM_INITIAL);
   const [pendingEditTaskId, setPendingEditTaskId] = useState<string | null>(null);
@@ -209,6 +209,26 @@ export default function App() {
   async function loadData() {
     await Promise.all([loadProjects(), loadTasks(), loadLogs(), loadSettings()]);
   }
+
+  /**
+   * Surface a failed action instead of swallowing it.
+   *
+   * Several handlers used to `catch {}` an IPC rejection, so a failed start or push
+   * looked identical to nothing happening — the user's only signal was the absence
+   * of change.
+   */
+  const showError = useCallback((title: string, err: unknown) => {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[ui] ${title}:`, err);
+    setConfirm({
+      open: true,
+      title,
+      message,
+      variant: 'danger',
+      confirmLabel: t('common:ok', 'OK'),
+      onConfirm: () => setConfirm(CONFIRM_INITIAL),
+    });
+  }, [t]);
 
   async function loadProjects() {
     try {
@@ -415,10 +435,13 @@ export default function App() {
       });
       await ipc.runAgent(task.id);
       await loadTasks();
-    } catch {
-      // error
+    } catch (err) {
+      // Roll back the optimistic agent entry. Leaving it behind showed a progress
+      // bar and a Stop button for a run that never started (e.g. CLI not installed).
+      setAgents((prev) => { const next = new Map(prev); next.delete(task.id); return next; });
+      showError('Could not start task', err);
     }
-  }, []);
+  }, [showError]);
 
   const handleStopTask = useCallback(async (task: Task) => {
     try {
@@ -487,18 +510,32 @@ export default function App() {
   }, []);
 
   const handleApprovePush = useCallback(async (task: Task) => {
-    await ipc.continuePush(task.id, 'approve');
-  }, []);
+    try {
+      await ipc.continuePush(task.id, 'approve');
+      await loadTasks();
+    } catch (err) {
+      showError('Could not approve push', err);
+    }
+  }, [showError]);
 
   const handleRejectPush = useCallback(async (task: Task) => {
-    await ipc.continuePush(task.id, 'reject');
-    setAgents((prev) => { const next = new Map(prev); next.delete(task.id); return next; });
-    await loadTasks();
-  }, []);
+    try {
+      await ipc.continuePush(task.id, 'reject');
+      setAgents((prev) => { const next = new Map(prev); next.delete(task.id); return next; });
+      await loadTasks();
+    } catch (err) {
+      showError('Could not reject push', err);
+    }
+  }, [showError]);
 
   const handleRevisePush = useCallback(async (task: Task, prompt: string) => {
-    await ipc.continuePush(task.id, 'revise', prompt);
-  }, []);
+    try {
+      await ipc.continuePush(task.id, 'revise', prompt);
+      await loadTasks();
+    } catch (err) {
+      showError('Could not send revision', err);
+    }
+  }, [showError]);
 
   const handleFixTests = useCallback(async (task: Task) => {
     try {

@@ -125,6 +125,16 @@ export interface CodeHostingAdapter {
   readonly cli: string;
 
   /**
+   * Shell command the Ship phase agent must run to open a PR/MR
+   * (e.g. 'gh pr create', 'bkt pr create'). Injected into the Phase 4
+   * prompt so shipping is not hardcoded to any one provider.
+   */
+  readonly prCreateCommand: string;
+
+  /** What this provider calls a PR — used in prompts and logs ('Pull Request', 'Merge Request'). */
+  readonly prTerm: string;
+
+  /**
    * Build environment variables for subprocess injection.
    * Merges global plugin config with per-project overrides.
    */

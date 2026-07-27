@@ -3,6 +3,7 @@ import type Database from 'better-sqlite3';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { createQueries } from '../db/queries';
+import { safeJsonParse } from './tasks';
 import { readSettingSources, writeSettingSources } from './skills';
 import { canCreateProject } from './license';
 
@@ -30,14 +31,14 @@ function rowToProject(row: Record<string, unknown>) {
     path: row.path as string,
     repo: row.repo as string | undefined,
     description: row.description as string,
-    optionalSkills: JSON.parse((row.optional_skills as string) || '[]'),
+    optionalSkills: safeJsonParse<string[]>(row.optional_skills, [], 'projects.optional_skills'),
     testCommand: (row.test_command as string) || '',
     codeHosting: (row.code_hosting as string) || undefined,
-    codeHostingConfig: JSON.parse((row.code_hosting_config as string) || '{}'),
+    codeHostingConfig: safeJsonParse<Record<string, unknown>>(row.code_hosting_config, {}, 'projects.code_hosting_config'),
     pluginPm: (row.plugin_pm as string) || undefined,
-    pluginPmConfig: JSON.parse((row.plugin_pm_config as string) || '{}'),
+    pluginPmConfig: safeJsonParse<Record<string, unknown>>(row.plugin_pm_config, {}, 'projects.plugin_pm_config'),
     aiAgent: (row.ai_agent as string) || 'claude',
-    aiAgentPhases: JSON.parse((row.ai_agent_phases as string) || '{}'),
+    aiAgentPhases: safeJsonParse<Record<string, unknown>>(row.ai_agent_phases, {}, 'projects.ai_agent_phases'),
     defaultModel: (row.default_model as string) || 'sonnet',
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
@@ -92,7 +93,7 @@ export function registerProjectHandlers(ipcMain: IpcMain, db: Database.Database)
     const projectPath = (updates.path ?? existing.path) as string;
     const skills = updates.optionalSkills
       ? updates.optionalSkills
-      : JSON.parse((existing.optional_skills as string) || '[]');
+      : safeJsonParse<string[]>(existing.optional_skills, [], 'projects.optional_skills');
 
     q.updateProject.run(
       updates.name ?? existing.name,

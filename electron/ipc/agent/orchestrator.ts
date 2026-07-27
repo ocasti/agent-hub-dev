@@ -16,7 +16,7 @@ import { extractFieldByPath } from '../plugins/index';
 import type { HookContext } from '../plugins/types';
 import { canUseModel, getEffectiveMaxReviewLoops, getMaxParallelPerProject } from '../license';
 import { sendNotification } from '../notifications';
-import { resolveEnvVars, getProjectAdapter } from './adapters/registry';
+import { resolveEnvVars, resolveAgentEnvVars, getProjectAdapter } from './adapters/registry';
 
 // ── SDD Workflow Orchestrator ──────────────────────────────────────────────────
 
@@ -55,8 +55,11 @@ export async function orchestrateSddWorkflow(
     // Validate model against license limits
     if (!canUseModel(db, model)) throw new Error('MODEL_NOT_AVAILABLE');
 
-    // Resolve code hosting env vars (token, author name/email) for all subprocess calls
+    // Code hosting env for git/CLI calls the app makes itself (includes the token)…
     const extraEnv = resolveEnvVars(task.project_id, db);
+    // …and the credential-free variant for AI agent subprocesses, which run
+    // arbitrary shell commands over untrusted PR/issue text.
+    const agentEnv = resolveAgentEnvVars(task.project_id, db);
 
     const criteria = JSON.parse(task.acceptance_criteria || '[]') as string[];
     const knowledge = (q.getProjectKnowledge.all(task.project_id) || []) as KnowledgeRow[];
@@ -138,14 +141,7 @@ export async function orchestrateSddWorkflow(
       q.updateTaskWorktree.run(wt.worktreePath, taskId);
 
       // Save branch name early so resume knows the branch
-      const freshForWT = q.getTask.get(taskId) as TaskRow | undefined;
-      if (freshForWT) {
-        q.updateTask.run(
-          freshForWT.title, freshForWT.description, freshForWT.acceptance_criteria, freshForWT.images,
-          freshForWT.model, freshForWT.status, freshForWT.pr_number, freshForWT.review_cycle,
-          freshForWT.spec_suggestions, freshForWT.plan_summary, wt.branchName, freshForWT.pm_work_item_id, freshForWT.pm_work_item_url, taskId
-        );
-      }
+      q.patchTask(taskId, { branch_name: wt.branchName });
 
       // Install dependencies in worktree (symlink node_modules when possible)
       await setupWorktreeDepsWithSymlink(workDir, projectPath, taskId, projectName, q, getWindow);
@@ -209,7 +205,7 @@ export async function orchestrateSddWorkflow(
 
       const prompt = buildPhasePrompt(0, task, projectDescription, knowledge, criteria, undefined, useSpeckit);
       const { output, exitCode } = await runAgentPhase(db, task.project_id, 0, {
-        projectPath: workDir, model, prompt, taskId, q, getWindow, controller, timeoutMs: 300000, extraEnv,
+        projectPath: workDir, model, prompt, taskId, q, getWindow, controller, timeoutMs: 300000, extraEnv: agentEnv,
       });
 
       if (exitCode !== 0) {
@@ -225,11 +221,7 @@ export async function orchestrateSddWorkflow(
         const suggestions = parsed.suggestions || [];
         const suggestionsJson = JSON.stringify(suggestions);
         // Save suggestions to task
-        q.updateTask.run(
-          task.title, task.description, task.acceptance_criteria, task.images,
-          task.model, 'spec_feedback', task.pr_number, task.review_cycle,
-          suggestionsJson, task.plan_summary, task.branch_name, task.pm_work_item_id, task.pm_work_item_url, taskId
-        );
+        q.patchTask(taskId, { status: 'spec_feedback', spec_suggestions: suggestionsJson });
         sendPhaseUpdate(getWindow, {
           taskId, phase: 0, phaseLabel: 'spec_feedback', status: 'paused',
           specSuggestions: suggestions,
@@ -247,11 +239,12 @@ export async function orchestrateSddWorkflow(
         if (specProjectRunning >= specMaxParallel) {
           sendLog(q, getWindow, taskId, projectName, `Project "${projectName}" has reached its parallel limit (${specMaxParallel}). Spec processed but task will wait in queue.`, 'info');
           if (userResponse.action === 'edit' && userResponse.editedSpec) {
-            q.updateTask.run(
-              task.title, userResponse.editedSpec, task.acceptance_criteria, task.images,
-              task.model, 'queued', task.pr_number, task.review_cycle,
-              '[]', null, task.branch_name, task.pm_work_item_id, task.pm_work_item_url, taskId
-            );
+            q.patchTask(taskId, {
+              description: userResponse.editedSpec,
+              status: 'queued',
+              spec_suggestions: '[]',
+              plan_summary: null,
+            });
           } else {
             q.updateTaskStatus.run('queued', taskId);
           }
@@ -263,11 +256,12 @@ export async function orchestrateSddWorkflow(
 
         if (userResponse.action === 'edit' && userResponse.editedSpec) {
           // Update task description and restart from phase 0
-          q.updateTask.run(
-            task.title, userResponse.editedSpec, task.acceptance_criteria, task.images,
-            task.model, 'queued', task.pr_number, task.review_cycle,
-            '[]', null, task.branch_name, taskId
-          );
+          q.patchTask(taskId, {
+            description: userResponse.editedSpec,
+            status: 'queued',
+            spec_suggestions: '[]',
+            plan_summary: null,
+          });
           sendLog(q, getWindow, taskId, projectName, 'Spec updated by user. Restarting from Phase 0.', 'info');
           activeControllers.delete(taskId);
           return orchestrateSddWorkflow(taskId, q, db, getWindow, 0);
@@ -290,7 +284,7 @@ export async function orchestrateSddWorkflow(
 
       const planPrompt = buildPhasePrompt(1, task, projectDescription, knowledge, criteria, undefined, useSpeckit);
       const { output: planOutput, exitCode: planExit } = await runAgentPhase(db, task.project_id, 1, {
-        projectPath: workDir, model, prompt: planPrompt, taskId, q, getWindow, controller, timeoutMs: 600000, extraEnv,
+        projectPath: workDir, model, prompt: planPrompt, taskId, q, getWindow, controller, timeoutMs: 600000, extraEnv: agentEnv,
       });
 
       if (planExit !== 0) {
@@ -304,11 +298,7 @@ export async function orchestrateSddWorkflow(
       // ── Plan Review Gate: pause for user approval ──
       // Capture a summary of the plan output (first ~2000 chars)
       const planSummary = planOutput.trim().substring(0, 2000);
-      q.updateTask.run(
-        task.title, task.description, task.acceptance_criteria, task.images,
-        task.model, 'plan_review', task.pr_number, task.review_cycle,
-        task.spec_suggestions, planSummary, task.branch_name, task.pm_work_item_id, task.pm_work_item_url, taskId
-      );
+      q.patchTask(taskId, { status: 'plan_review', plan_summary: planSummary });
       sendPhaseUpdate(getWindow, {
         taskId, phase: 1, phaseLabel: 'plan_review', status: 'paused',
         planSummary,
@@ -355,14 +345,7 @@ export async function orchestrateSddWorkflow(
       );
 
       // Save branch name to task so resume can use it
-      const freshForBranch = q.getTask.get(taskId) as TaskRow | undefined;
-      if (freshForBranch) {
-        q.updateTask.run(
-          freshForBranch.title, freshForBranch.description, freshForBranch.acceptance_criteria, freshForBranch.images,
-          freshForBranch.model, freshForBranch.status, freshForBranch.pr_number, freshForBranch.review_cycle,
-          freshForBranch.spec_suggestions, freshForBranch.plan_summary, branchName, freshForBranch.pm_work_item_id, freshForBranch.pm_work_item_url, taskId
-        );
-      }
+      q.patchTask(taskId, { branch_name: branchName });
     }
 
     // Worktree mode: detect conflicts with other active worktrees before implementing
@@ -390,7 +373,7 @@ export async function orchestrateSddWorkflow(
         sendLog(q, getWindow, taskId, projectName, `Implementation tasks: ${implSubtasks.length} total, ${pending} pending`, 'info');
       }
 
-      await runSimplePhase(2, 'implementing', taskId, task, workDir, projectName, projectDescription, model, knowledge, criteria, q, getWindow, controller, useSpeckit, extraEnv, db, implSubtasks);
+      await runSimplePhase(2, 'implementing', taskId, task, workDir, projectName, projectDescription, model, knowledge, criteria, q, getWindow, controller, useSpeckit, agentEnv, db, implSubtasks);
 
       // Mark all subtasks as completed in plugin_context after Phase 2 succeeds.
       // This keeps local state in sync — on:implement_complete marks them in PM
@@ -415,7 +398,7 @@ export async function orchestrateSddWorkflow(
           sendLog(q, getWindow, taskId, projectName,
             `Subtask gate: ${pending.length}/${pendingCheck.length} tasks still pending. Re-running Phase 2 before Quality Gate.`, 'info');
           q.updateTaskLastPhase.run(2, taskId);
-          await runSimplePhase(2, 'implementing', taskId, task, workDir, projectName, projectDescription, model, knowledge, criteria, q, getWindow, controller, useSpeckit, extraEnv, db, pendingCheck);
+          await runSimplePhase(2, 'implementing', taskId, task, workDir, projectName, projectDescription, model, knowledge, criteria, q, getWindow, controller, useSpeckit, agentEnv, db, pendingCheck);
           markAllSubtasksCompleted(db, taskId);
           await fireHook('on:implement_complete', { ...hookCtx, phase: 2, phaseLabel: 'implementing' }, db);
         } else {
@@ -443,7 +426,7 @@ export async function orchestrateSddWorkflow(
 
         const prompt = buildPhasePrompt(3, task, projectDescription, knowledge, criteria, reviewLoop, useSpeckit);
         const { output, exitCode } = await runAgentPhase(db, task.project_id, 3, {
-          projectPath: workDir, model, prompt, taskId, q, getWindow, controller, timeoutMs: 900000, extraEnv,
+          projectPath: workDir, model, prompt, taskId, q, getWindow, controller, timeoutMs: 900000, extraEnv: agentEnv,
         });
 
         if (exitCode !== 0) {
@@ -482,7 +465,7 @@ export async function orchestrateSddWorkflow(
             const issuesText = (parsed.issues || []).map((i) => `- [${i.category}] ${i.description}`).join('\n');
             const fixPrompt = buildFixPrompt(task, projectDescription, knowledge, criteria, issuesText);
             const fixResult = await runAgentPhase(db, task.project_id, 3, {
-              projectPath: workDir, model, prompt: fixPrompt, taskId, q, getWindow, controller, timeoutMs: 900000, extraEnv,
+              projectPath: workDir, model, prompt: fixPrompt, taskId, q, getWindow, controller, timeoutMs: 900000, extraEnv: agentEnv,
             });
 
             if (fixResult.exitCode !== 0) {
@@ -501,14 +484,7 @@ export async function orchestrateSddWorkflow(
         }
 
         // Update review_cycle in DB
-        const freshTaskReview = q.getTask.get(taskId) as TaskRow | undefined;
-        if (freshTaskReview) {
-          q.updateTask.run(
-            freshTaskReview.title, freshTaskReview.description, freshTaskReview.acceptance_criteria, freshTaskReview.images,
-            freshTaskReview.model, freshTaskReview.status, freshTaskReview.pr_number, reviewLoop,
-            freshTaskReview.spec_suggestions, freshTaskReview.plan_summary, freshTaskReview.branch_name, freshTaskReview.pm_work_item_id, freshTaskReview.pm_work_item_url, taskId
-          );
-        }
+        q.patchTask(taskId, { review_cycle: reviewLoop });
       }
     }
 
@@ -519,7 +495,16 @@ export async function orchestrateSddWorkflow(
     }
 
     // ── Phase 4: Ship (only if code-hosting plugin is active) ──────────────
-    const hasCodeHosting = hasCodeHostingPlugin(task.project_id, db);
+    // Gate on the resolved adapter, not just the projects.code_hosting column:
+    // if the plugin was disabled or uninstalled while the task was queued, shipping
+    // would push a PR that PR Feedback could never poll, stranding the task.
+    const shipAdapter = getProjectAdapter(task.project_id, db);
+    const hasCodeHosting = hasCodeHostingPlugin(task.project_id, db) && shipAdapter !== undefined;
+    if (startPhase <= 4 && hasCodeHostingPlugin(task.project_id, db) && !shipAdapter) {
+      sendLog(q, getWindow, taskId, projectName,
+        'Project references a code hosting plugin that is not installed or is disabled. Stopping after Phase 3 — ship and PR feedback are unavailable.',
+        'error');
+    }
     if (startPhase <= 4 && hasCodeHosting) {
       checkAborted(controller);
       q.updateTaskLastPhase.run(4, taskId);
@@ -528,9 +513,12 @@ export async function orchestrateSddWorkflow(
       sendLog(q, getWindow, taskId, projectName, '── Phase 4: Ship ──', 'info');
       await fireHook('on:ship_started', { ...hookCtx, phase: 4, phaseLabel: 'shipping' }, db);
 
-      const prompt = buildPhasePrompt(4, task, projectDescription, knowledge, criteria, undefined, useSpeckit);
+      const prompt = buildPhasePrompt(4, task, projectDescription, knowledge, criteria, undefined, useSpeckit, undefined, undefined, {
+        prCreateCommand: shipAdapter.prCreateCommand,
+        prTerm: shipAdapter.prTerm,
+      });
       const { output, exitCode } = await runAgentPhase(db, task.project_id, 4, {
-        projectPath: workDir, model, prompt, taskId, q, getWindow, controller, timeoutMs: 600000, extraEnv,
+        projectPath: workDir, model, prompt, taskId, q, getWindow, controller, timeoutMs: 600000, extraEnv: agentEnv,
       });
 
       if (exitCode !== 0) {
@@ -544,16 +532,26 @@ export async function orchestrateSddWorkflow(
 
       // Update task with PR number and branch
       const freshTaskShip = q.getTask.get(taskId) as TaskRow | undefined;
-      if (freshTaskShip) {
-        q.updateTask.run(
-          freshTaskShip.title, freshTaskShip.description, freshTaskShip.acceptance_criteria, freshTaskShip.images,
-          freshTaskShip.model, 'pr_feedback', parsed.prNumber || freshTaskShip.pr_number,
-          freshTaskShip.review_cycle, freshTaskShip.spec_suggestions, freshTaskShip.plan_summary,
-          parsed.branchName || freshTaskShip.branch_name, freshTaskShip.pm_work_item_id, freshTaskShip.pm_work_item_url, taskId
-        );
+      const effectivePrNumber = parsed.prNumber || freshTaskShip?.pr_number || null;
+
+      // Exit code 0 without a PR number means the agent never actually opened a PR
+      // (or dropped the marker). Entering pr_feedback with no PR strands the task:
+      // Fetch & Fix has nothing to poll and the user cannot leave the state.
+      if (!effectivePrNumber) {
+        sendLog(q, getWindow, taskId, projectName,
+          'Ship phase reported success but no PR number was found in its output. Not entering PR Feedback.', 'error');
+        await fireHook('on:ship_failed', { ...hookCtx, phase: 4, phaseLabel: 'shipping', error: 'No PR number returned by ship phase' }, db);
+        q.updateTaskStatus.run('failed', taskId);
+        sendPhaseUpdate(getWindow, { taskId, phase: 4, phaseLabel: 'shipping', status: 'failed' });
+        activeControllers.delete(taskId);
+        return;
       }
 
-      q.updateTaskStatus.run('pr_feedback', taskId);
+      q.patchTask(taskId, {
+        status: 'pr_feedback',
+        pr_number: effectivePrNumber,
+        branch_name: parsed.branchName || freshTaskShip?.branch_name || null,
+      });
       sendPhaseUpdate(getWindow, {
         taskId, phase: 4, phaseLabel: 'shipping', status: 'completed',
         prNumber: parsed.prNumber,

@@ -26,6 +26,40 @@ interface TaskInput {
   pluginContext?: Record<string, unknown>;
 }
 
+/**
+ * Parse a JSON column, falling back instead of throwing.
+ *
+ * These parses used to be bare `JSON.parse`, so a single corrupted row (partial
+ * write, manual edit) made `tasks:getAll` throw for *every* task and blanked the
+ * whole Tasks view, with no way to repair it from the UI.
+ */
+export function safeJsonParse<T>(raw: unknown, fallback: T, context: string): T {
+  if (raw === null || raw === undefined || raw === '') return fallback;
+  try {
+    const parsed = JSON.parse(raw as string);
+    return (parsed ?? fallback) as T;
+  } catch {
+    console.error(`[db] Malformed JSON in ${context}; using default. Value:`, raw);
+    return fallback;
+  }
+}
+
+/** Item a PM plugin tracks inside `tasks.plugin_context`. */
+interface PluginContextItem {
+  id: string;
+  description: string;
+  completed: boolean;
+}
+
+/** Per-plugin slice of `tasks.plugin_context`, keyed by plugin id. */
+interface PluginContextEntry {
+  subtasks?: PluginContextItem[];
+  criteria?: PluginContextItem[];
+  [key: string]: unknown;
+}
+
+type PluginContext = Record<string, PluginContextEntry | undefined>;
+
 function rowToTask(row: Record<string, unknown>) {
   return {
     id: row.id as string,
@@ -34,21 +68,21 @@ function rowToTask(row: Record<string, unknown>) {
     projectPath: row.project_path as string,
     title: row.title as string,
     description: row.description as string,
-    acceptanceCriteria: JSON.parse((row.acceptance_criteria as string) || '[]'),
-    images: JSON.parse((row.images as string) || '[]'),
+    acceptanceCriteria: safeJsonParse<string[]>(row.acceptance_criteria, [], 'tasks.acceptance_criteria'),
+    images: safeJsonParse<string[]>(row.images, [], 'tasks.images'),
     model: row.model as string,
     status: row.status as string,
     prNumber: row.pr_number as number | undefined,
     reviewCycle: row.review_cycle as number,
-    specSuggestions: JSON.parse((row.spec_suggestions as string) || '[]'),
+    specSuggestions: safeJsonParse<string[]>(row.spec_suggestions, [], 'tasks.spec_suggestions'),
     planSummary: (row.plan_summary as string) || undefined,
     lastPhase: (row.last_phase as number) ?? -1,
     branchName: row.branch_name as string | undefined,
-    criteriaStatus: JSON.parse((row.criteria_status as string) || '[]'),
+    criteriaStatus: safeJsonParse<unknown[]>(row.criteria_status, [], 'tasks.criteria_status'),
     pmWorkItemId: (row.pm_work_item_id as string) || undefined,
     pmWorkItemUrl: (row.pm_work_item_url as string) || undefined,
     worktreePath: (row.worktree_path as string) || undefined,
-    pluginContext: JSON.parse((row.plugin_context as string) || '{}'),
+    pluginContext: safeJsonParse<Record<string, unknown>>(row.plugin_context, {}, 'tasks.plugin_context'),
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   };
@@ -116,7 +150,7 @@ export function registerTaskHandlers(ipcMain: IpcMain, db: Database.Database) {
     // Save plugin_context if provided (e.g., PM subtasks from TaskForm)
     if (updates.pluginContext) {
       // Merge with existing plugin_context instead of overwriting
-      const existingPc = JSON.parse((existing.plugin_context as string) || '{}');
+      const existingPc = safeJsonParse<Record<string, unknown>>(existing.plugin_context, {}, 'tasks.plugin_context');
       const merged = { ...existingPc, ...updates.pluginContext };
       q.updatePluginContext.run(JSON.stringify(merged), id);
     }
@@ -135,29 +169,14 @@ export function registerTaskHandlers(ipcMain: IpcMain, db: Database.Database) {
         const prAdapter = getProjectAdapter(projectId, db);
         const prEnv = resolveEnvVars(projectId, db) || {};
         if (prAdapter) {
-          prAdapter.closePR({ projectPath, prNumber, comment }, prEnv).catch((err) => {
-            console.warn(`[tasks] Failed to close PR #${prNumber}:`, err.message);
-          }).then(() => {
-            console.log(`[tasks] Closed PR #${prNumber} via ${prAdapter.name} (task re-queued)`);
-          });
+          // .then() chained after .catch() logged success even when the close failed.
+          prAdapter.closePR({ projectPath, prNumber, comment }, prEnv).then(
+            () => console.log(`[tasks] Closed PR #${prNumber} via ${prAdapter.name} (task re-queued)`),
+            (err: Error) => console.warn(`[tasks] Failed to close PR #${prNumber}:`, err.message)
+          );
         }
-        // Clear PR number so the agent creates a fresh one
-        q.updateTask.run(
-          updates.title ?? existing.title,
-          updates.description ?? existing.description,
-          updates.acceptanceCriteria ? JSON.stringify(updates.acceptanceCriteria) : (existing.acceptance_criteria as string),
-          updates.images ? JSON.stringify(updates.images) : (existing.images as string),
-          updates.model ?? existing.model,
-          'queued',
-          null, // pr_number cleared
-          0,    // review_cycle reset
-          updates.specSuggestions ? JSON.stringify(updates.specSuggestions) : (existing.spec_suggestions as string),
-          null, // plan_summary cleared
-          existing.branch_name, // keep branch for reuse
-          updates.pmWorkItemId !== undefined ? updates.pmWorkItemId : (existing.pm_work_item_id as string | null),
-          updates.pmWorkItemUrl !== undefined ? updates.pmWorkItemUrl : (existing.pm_work_item_url as string | null),
-          id
-        );
+        // Clear PR number so the agent creates a fresh one. Branch is kept for reuse.
+        q.patchTask(id, { status: 'queued', pr_number: null, review_cycle: 0, plan_summary: null });
       }
     }
 
@@ -243,7 +262,7 @@ export function registerTaskHandlers(ipcMain: IpcMain, db: Database.Database) {
     const row = q.getTask.get(taskId) as Record<string, unknown>;
     if (!row) throw new Error(`Task ${taskId} not found`);
 
-    const pc = JSON.parse((row.plugin_context as string) || '{}');
+    const pc = safeJsonParse<PluginContext>(row.plugin_context, {}, 'tasks.plugin_context');
     const pluginData = pc[pluginId];
     if (!pluginData?.subtasks) throw new Error('No subtasks found for this plugin');
 
@@ -282,7 +301,7 @@ export function registerTaskHandlers(ipcMain: IpcMain, db: Database.Database) {
     const row = q.getTask.get(taskId) as Record<string, unknown>;
     if (!row) throw new Error(`Task ${taskId} not found`);
 
-    const pc = JSON.parse((row.plugin_context as string) || '{}');
+    const pc = safeJsonParse<PluginContext>(row.plugin_context, {}, 'tasks.plugin_context');
     const pluginData = pc[pluginId];
     if (!pluginData?.criteria) throw new Error('No criteria found for this plugin');
 
@@ -375,22 +394,23 @@ export function registerTaskHandlers(ipcMain: IpcMain, db: Database.Database) {
 
     // Merge with existing plugin_context
     // Remote completion status takes priority; fallback to local state
-    const pc = JSON.parse((row.plugin_context as string) || '{}');
+    const pc = safeJsonParse<PluginContext>(row.plugin_context, {}, 'tasks.plugin_context');
     if (!pc[pluginId]) pc[pluginId] = {};
 
     // Subtasks
-    const existingSt = (pc[pluginId].subtasks || []) as { id: string; description: string; completed: boolean }[];
+    const entry = pc[pluginId] as PluginContextEntry;
+    const existingSt = entry.subtasks || [];
     const stMap = new Map(existingSt.map((s) => [s.id, s.completed]));
-    pc[pluginId].subtasks = descs.map((desc, i) => ({
+    entry.subtasks = descs.map((desc, i) => ({
       id: String(ids[i] ?? ''),
       description: String(desc),
       completed: stCompleted.length > 0 ? !!stCompleted[i] : (stMap.get(String(ids[i] ?? '')) ?? false),
     }));
 
     // Criteria
-    const existingCr = (pc[pluginId].criteria || []) as { id: string; description: string; completed: boolean }[];
+    const existingCr = entry.criteria || [];
     const crMap = new Map(existingCr.map((c) => [c.id, c.completed]));
-    pc[pluginId].criteria = cDescs.map((desc, i) => ({
+    entry.criteria = cDescs.map((desc, i) => ({
       id: String(cIds[i] ?? ''),
       description: String(desc),
       completed: crCompleted.length > 0 ? !!crCompleted[i] : (crMap.get(String(cIds[i] ?? '')) ?? false),

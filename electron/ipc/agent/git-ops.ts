@@ -245,3 +245,86 @@ export async function prepareGitBranch(
 
   return branchName;
 }
+
+/**
+ * Squash every commit ahead of the remote branch into one, then force-push.
+ *
+ * Runs as plain git calls rather than through the agent: the commit message is
+ * built from PR review text, and instructing an agent to run
+ * `git commit -m "<reviewer text>"` let a comment author inject shell commands
+ * into a Bash tool call. Passing the message as an argv element cannot be escaped out of.
+ */
+export async function squashAndPush(
+  workDir: string,
+  branchName: string,
+  commitMessage: string,
+  taskId: string,
+  projectName: string,
+  q: Queries,
+  getWindow: GetWindow,
+  extraEnv?: Record<string, string | undefined>
+): Promise<void> {
+  const remoteRef = `origin/${branchName}`;
+
+  let ahead = 0;
+  try {
+    const out = await execFileAsync(
+      'git', ['rev-list', '--count', `${remoteRef}..HEAD`], workDir, 15000, false, extraEnv
+    );
+    ahead = parseInt(out.trim(), 10) || 0;
+  } catch {
+    // No remote tracking ref yet (first push of the branch) — treat as "nothing to squash".
+    ahead = 0;
+  }
+
+  if (ahead > 1) {
+    await execFileAsync('git', ['reset', '--soft', remoteRef], workDir, 15000, false, extraEnv);
+    await execFileAsync('git', ['commit', '-m', commitMessage], workDir, 15000, false, extraEnv);
+    sendLog(q, getWindow, taskId, projectName, `Git: squashed ${ahead} commits into one`, 'ok');
+  } else if (ahead === 1) {
+    await execFileAsync('git', ['commit', '--amend', '-m', commitMessage], workDir, 15000, false, extraEnv);
+    sendLog(q, getWindow, taskId, projectName, 'Git: amended single commit', 'ok');
+  } else {
+    sendLog(q, getWindow, taskId, projectName, 'Git: no local commits to squash', 'info');
+  }
+
+  await execFileAsync('git', ['push', '--force-with-lease'], workDir, 60000, false, extraEnv);
+  sendLog(q, getWindow, taskId, projectName, 'Git: pushed to remote', 'ok');
+}
+
+/**
+ * Stage everything and commit, if there is anything staged.
+ *
+ * Deterministic counterpart to the old "tell the agent to run git add && git commit"
+ * prompt: the message is built from review thread labels, which are attacker-influenced,
+ * and must never reach a shell as text.
+ *
+ * Returns true when a commit was created.
+ */
+export async function commitAllIfStaged(
+  workDir: string,
+  commitMessage: string,
+  taskId: string,
+  projectName: string,
+  q: Queries,
+  getWindow: GetWindow,
+  extraEnv?: Record<string, string | undefined>
+): Promise<boolean> {
+  await execFileAsync('git', ['add', '-A'], workDir, 15000, false, extraEnv);
+
+  // `git diff --cached --quiet` exits 1 when there *are* staged changes.
+  let hasStaged = false;
+  try {
+    await execFileAsync('git', ['diff', '--cached', '--quiet'], workDir, 15000, false, extraEnv);
+  } catch {
+    hasStaged = true;
+  }
+
+  if (!hasStaged) {
+    sendLog(q, getWindow, taskId, projectName, 'Git: no changes to commit', 'info');
+    return false;
+  }
+
+  await execFileAsync('git', ['commit', '-m', commitMessage], workDir, 15000, false, extraEnv);
+  return true;
+}

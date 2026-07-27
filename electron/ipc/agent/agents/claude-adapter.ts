@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'child_process';
 import { v4 as uuidv4 } from 'uuid';
 import type { TaskRow } from '../types';
-import { sendLog } from '../state';
+import { sendLog, registerChild, unregisterChild, terminateChild } from '../state';
 import { execFileAsync, cleanEnv } from '../claude-cli';
 import type { AgentAdapter, AgentRunOptions, AgentRunResult } from './types';
 
@@ -56,6 +56,14 @@ export class ClaudeAdapter implements AgentAdapter {
         }
       );
 
+      registerChild(child);
+
+      // Without an error listener, writing a multi-KB prompt to a CLI that exited
+      // immediately (bad flag, expired auth) raises EPIPE as an uncaught exception
+      // in the Electron main process, killing every other running task.
+      child.stdin?.on('error', (err: Error) => {
+        sendLog(q, getWindow, taskId, projectName, `Agent stdin error: ${err.message}`, 'error');
+      });
       child.stdin?.write(prompt);
       child.stdin?.end();
 
@@ -67,7 +75,7 @@ export class ClaudeAdapter implements AgentAdapter {
         timedOut = true;
         sendLog(q, getWindow, taskId, projectName,
           `Phase timed out after ${Math.round(timeoutMs / 60000)} minutes. Killing process.`, 'error');
-        child.kill('SIGTERM');
+        terminateChild(child);
       }, timeoutMs);
 
       child.stdout?.on('data', (data: Buffer) => {
@@ -90,6 +98,7 @@ export class ClaudeAdapter implements AgentAdapter {
 
       child.on('close', (code: number | null) => {
         clearTimeout(timeout);
+        unregisterChild(child);
         const result = code === 0 && !timedOut ? 'ok' : 'error';
         if (taskId) q.finishAgentRun.run(result, output, timedOut ? errorOutput + '\n[TIMED_OUT]' : errorOutput, runId);
         if (timedOut) {
@@ -103,6 +112,7 @@ export class ClaudeAdapter implements AgentAdapter {
 
       child.on('error', (err: Error) => {
         clearTimeout(timeout);
+        unregisterChild(child);
         if (taskId) q.finishAgentRun.run('error', output, err.message, runId);
         sendLog(q, getWindow, taskId, projectName, `Spawn error: ${err.message}`, 'error');
         reject(err);
@@ -110,7 +120,7 @@ export class ClaudeAdapter implements AgentAdapter {
 
       const onAbort = () => {
         clearTimeout(timeout);
-        child.kill('SIGTERM');
+        terminateChild(child);
         const err = new Error('Aborted');
         err.name = 'AbortError';
         reject(err);

@@ -110,3 +110,26 @@ export const PHASE_LABELS: Record<number, string> = {
   4: 'shipping',
   5: 'pr_feedback',
 };
+
+// ── Task status taxonomy ───────────────────────────────────────────────────────
+// Single source of truth. These lists were previously inlined in several queries
+// and components, and drifted: a status added to one list and missed in another
+// leaves tasks either invisible to the queue or permanently counted as running.
+
+/** A workflow is actively executing — occupies a concurrency slot. */
+export const RUNNING_STATUSES = [
+  'spec_review', 'planning', 'implementing', 'reviewing', 'shipping', 'pr_fixing',
+] as const;
+
+/** Waiting on the user or on an external event — does NOT occupy a slot. */
+export const PAUSED_STATUSES = [
+  'queued', 'spec_feedback', 'plan_review', 'pr_feedback', 'push_review', 'test_fixing',
+] as const;
+
+/** Finished, successfully or not. */
+export const TERMINAL_STATUSES = ['completed', 'failed'] as const;
+
+/** Statuses that mean "not running", for `NOT IN (...)` style checks. */
+export const NON_RUNNING_STATUSES: readonly string[] = [
+  ...PAUSED_STATUSES, ...TERMINAL_STATUSES,
+];

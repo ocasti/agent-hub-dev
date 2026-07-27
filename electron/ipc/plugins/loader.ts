@@ -81,7 +81,24 @@ function isValidHttpsUrl(url: string): boolean {
   }
 }
 
-const PLUGIN_ID_PATTERN = /^[a-z0-9-]+$/;
+export const PLUGIN_ID_PATTERN = /^[a-z0-9-]+$/;
+
+/**
+ * Reject anything that can't safely be used as a directory name.
+ *
+ * Plugin ids become a path segment under `~/.config/agent-hub/plugins/`, and
+ * uninstall does `rmSync(pluginDir, { recursive: true, force: true })` on it. The
+ * pattern was previously only applied to catalog entries, so an id arriving from
+ * IPC or from a local `plugin.json` (e.g. `../../.ssh`) escaped that directory.
+ */
+export function assertValidPluginId(pluginId: unknown): string {
+  if (typeof pluginId !== 'string' || !PLUGIN_ID_PATTERN.test(pluginId)) {
+    throw new Error(
+      `Invalid plugin id: ${String(pluginId)}. Only lowercase letters, digits and hyphens are allowed.`
+    );
+  }
+  return pluginId;
+}
 
 function validateCatalogEntry(entry: unknown): CatalogPlugin | null {
   if (!entry || typeof entry !== 'object') return null;

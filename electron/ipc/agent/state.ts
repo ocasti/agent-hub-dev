@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import type Database from 'better-sqlite3';
 import type { Queries, GetWindow } from './types';
+import { RUNNING_STATUSES } from './types';
 
 // ── Resolver Maps ──────────────────────────────────────────────────────────────
 
@@ -10,6 +11,77 @@ export const specResolvers = new Map<string, (value: { action: 'accept' | 'edit'
 export const planResolvers = new Map<string, (value: { action: 'approve' | 'replan' }) => void>();
 export const pushResolvers = new Map<string, (value: { action: 'approve' | 'reject' | 'revise'; prompt?: string }) => void>();
 export const fixTestsResolvers = new Map<string, (value: void) => void>();
+
+// ── Process Supervisor ─────────────────────────────────────────────────────────
+
+/**
+ * Every agent/test subprocess currently running, so the app can terminate them
+ * on quit instead of orphaning them.
+ *
+ * Agents run with permissive tool access; an orphan keeps editing the user's
+ * repository after the app is gone.
+ */
+const liveChildren = new Set<{ kill(signal: NodeJS.Signals): boolean; pid?: number }>();
+
+export function registerChild(child: { kill(signal: NodeJS.Signals): boolean; pid?: number }): void {
+  liveChildren.add(child);
+}
+
+export function unregisterChild(child: { kill(signal: NodeJS.Signals): boolean; pid?: number }): void {
+  liveChildren.delete(child);
+}
+
+/**
+ * Ask a child to stop, then force it. CLIs that trap SIGTERM (or sit in an
+ * uninterruptible tool call) would otherwise ignore the request and leave the
+ * phase awaiting a 'close' event that never fires.
+ */
+export function terminateChild(
+  child: { kill(signal: NodeJS.Signals): boolean; pid?: number },
+  graceMs: number = 5000
+): void {
+  try {
+    child.kill('SIGTERM');
+  } catch { /* already gone */ }
+
+  const forceKill = setTimeout(() => {
+    try {
+      child.kill('SIGKILL');
+    } catch { /* already gone */ }
+  }, graceMs);
+  // Don't hold the event loop open just to force-kill a process that already exited.
+  forceKill.unref?.();
+}
+
+/**
+ * Requeue tasks whose status says "running" but whose orchestration died with the
+ * previous session. `last_phase` is preserved, so the task resumes where it stopped.
+ *
+ * Returns how many rows were reset.
+ */
+export function reconcileInFlightTasks(db: Database.Database): number {
+  const placeholders = RUNNING_STATUSES.map(() => '?').join(', ');
+  const result = db.prepare(
+    `UPDATE tasks SET status = 'queued', updated_at = CURRENT_TIMESTAMP
+     WHERE status IN (${placeholders})`
+  ).run(...RUNNING_STATUSES);
+  return result.changes;
+}
+
+/** Abort every running workflow and terminate its subprocesses. Called on app quit. */
+export function shutdownAllAgents(): void {
+  for (const controller of activeControllers.values()) {
+    try {
+      controller.abort();
+    } catch { /* ignore */ }
+  }
+  activeControllers.clear();
+
+  for (const child of liveChildren) {
+    terminateChild(child, 2000);
+  }
+  liveChildren.clear();
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 

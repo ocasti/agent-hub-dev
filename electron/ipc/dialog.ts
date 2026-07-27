@@ -60,6 +60,18 @@ export function registerDialogHandlers(
   });
 
   ipcMain.handle('dialog:openExternal', async (_event, url: string) => {
+    // Only hand web URLs to the OS. Without this, a URL arriving from plugin or PR
+    // data could launch file://, smb:// or a third-party protocol handler — a
+    // code-execution primitive on Windows.
+    let protocol: string;
+    try {
+      protocol = new URL(url).protocol;
+    } catch {
+      throw new Error(`Not a valid URL: ${url}`);
+    }
+    if (protocol !== 'http:' && protocol !== 'https:') {
+      throw new Error(`Refusing to open a non-web URL (${protocol})`);
+    }
     await shell.openExternal(url);
   });
 

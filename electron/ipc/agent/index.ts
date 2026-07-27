@@ -50,6 +50,15 @@ export function registerAgentHandlers(
     const task = q.getTask.get(taskId) as TaskRow | undefined;
     if (!task) return;
 
+    // Refuse to orchestrate a task that is already running. Without this, a double
+    // click (or a renderer retry) started a second workflow that overwrote the first
+    // AbortController — leaving the first run unstoppable while two agents wrote to
+    // the same working directory and branch.
+    if (activeControllers.has(taskId)) {
+      sendLog(q, getWindow, taskId, task.project_name, 'Task is already running. Ignoring duplicate start request.', 'info');
+      return;
+    }
+
     // Check per-project limit
     const maxParallel = getMaxParallelPerProject(db);
     const projectActive = (q.getRunningTaskCountByProject.get(task.project_id, taskId) as { count: number }).count;
@@ -160,11 +169,7 @@ export function registerAgentHandlers(
       }
 
       if (action === 'edit' && editedSpec && task) {
-        q.updateTask.run(
-          task.title, editedSpec, task.acceptance_criteria, task.images,
-          task.model, 'queued', task.pr_number, task.review_cycle,
-          task.spec_suggestions, task.plan_summary, task.branch_name, task.pm_work_item_id, task.pm_work_item_url, taskId
-        );
+        q.patchTask(taskId, { description: editedSpec, status: 'queued' });
       }
       q.updateTaskStatus.run('queued', taskId);
       orchestrateSddWorkflow(taskId, q, db, getWindow, 0).catch((err) => {

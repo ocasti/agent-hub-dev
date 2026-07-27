@@ -280,14 +280,27 @@ export function registerLicenseHandlers(ipcMain: IpcMain, db: Database.Database)
     };
   });
 
-  // Validate current token (called on app startup)
-  ipcMain.handle('license:validate', async () => {
-    const token = getSettingValue(db, 'license_key');
-    if (!token) {
-      return { plan: 'free', limits: TIER_LIMITS.free };
-    }
+  // Validate current token (called on app startup and from the renderer)
+  ipcMain.handle('license:validate', () => validateLicense(db));
 
-    try {
+  registerRemainingLicenseHandlers(ipcMain, db);
+}
+
+/**
+ * Re-check the stored token against the licensing API and refresh cached tier/limits.
+ *
+ * Exported so the startup path can call it directly. It used to be triggered with
+ * `ipcMain.emit('license:validate')`, which does nothing for a channel registered
+ * via `ipcMain.handle` — so the scheduled revalidation never ran and a revoked or
+ * expired tier persisted until the user happened to open the settings screen.
+ */
+export async function validateLicense(db: Database.Database) {
+  const token = getSettingValue(db, 'license_key');
+  if (!token) {
+    return { plan: 'free' as TierName, limits: TIER_LIMITS.free };
+  }
+
+  try {
       const response = await apiRequest('GET', '/me', undefined, token);
 
       saveAuthToDb(db, { ...response, token });
@@ -326,9 +339,10 @@ export function registerLicenseHandlers(ipcMain: IpcMain, db: Database.Database)
         username: getSettingValue(db, 'license_username'),
         email: getSettingValue(db, 'license_email'),
       };
-    }
-  });
+  }
+}
 
+function registerRemainingLicenseHandlers(ipcMain: IpcMain, db: Database.Database) {
   // Logout — clear all auth data locally
   ipcMain.handle('license:logout', async () => {
     clearAuth(db);

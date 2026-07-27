@@ -11,11 +11,17 @@ vi.mock('fs', () => ({
     readFileSync: vi.fn(),
     writeFileSync: vi.fn(),
     mkdirSync: vi.fn(),
+    renameSync: vi.fn(),
+    copyFileSync: vi.fn(),
+    realpathSync: vi.fn((p: string) => p),
   },
   existsSync: vi.fn(),
   readFileSync: vi.fn(),
   writeFileSync: vi.fn(),
   mkdirSync: vi.fn(),
+  renameSync: vi.fn(),
+  copyFileSync: vi.fn(),
+  realpathSync: vi.fn((p: string) => p),
 }));
 
 import fs from 'fs';

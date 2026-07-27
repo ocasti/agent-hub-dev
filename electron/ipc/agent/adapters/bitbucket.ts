@@ -31,6 +31,8 @@ export class BitbucketAdapter implements CodeHostingAdapter {
   readonly id = 'bitbucket';
   readonly name = 'Bitbucket';
   readonly cli = 'bkt';
+  readonly prCreateCommand = 'bkt pr create';
+  readonly prTerm = 'Pull Request';
 
   buildEnvVars(credentials: CodeHostingCredentials): CodeHostingEnvVars {
     const env: CodeHostingEnvVars = {};

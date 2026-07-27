@@ -86,13 +86,38 @@ interface HttpResponse {
   body: string;
 }
 
+/**
+ * Ceiling for any single MCP call.
+ *
+ * Blocking hooks are awaited by the orchestrator, so an unbounded request against
+ * an unresponsive MCP server froze the whole SDD workflow with no way out but
+ * aborting the task.
+ */
+const MCP_REQUEST_TIMEOUT_MS = 30_000;
+
 function httpPost(
   url: string,
   headers: Record<string, string>,
-  body: string
+  body: string,
+  timeoutMs: number = MCP_REQUEST_TIMEOUT_MS
 ): Promise<HttpResponse> {
   return new Promise((resolve, reject) => {
     const request = net.request({ method: 'POST', url });
+    let settled = false;
+
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try { request.abort(); } catch { /* already finished */ }
+      reject(new Error(`MCP request to ${url} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn();
+    };
 
     for (const [key, value] of Object.entries(headers)) {
       request.setHeader(key, value);
@@ -111,13 +136,13 @@ function httpPost(
       });
 
       response.on('end', () => {
-        resolve({ statusCode, headers: responseHeaders, body: responseData });
+        finish(() => resolve({ statusCode, headers: responseHeaders, body: responseData }));
       });
 
-      response.on('error', reject);
+      response.on('error', (err) => finish(() => reject(err)));
     });
 
-    request.on('error', reject);
+    request.on('error', (err) => finish(() => reject(err)));
     request.write(body);
     request.end();
   });

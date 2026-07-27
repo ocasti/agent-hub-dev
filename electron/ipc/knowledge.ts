@@ -2,6 +2,7 @@ import type { IpcMain } from 'electron';
 import type Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
 import { createQueries } from '../db/queries';
+import { safeJsonParse } from './tasks';
 import { canCreateKnowledge } from './license';
 
 interface KnowledgeInput {
@@ -31,7 +32,7 @@ function rowToKnowledge(row: Record<string, unknown>) {
     sourcePr: row.source_pr as number | undefined,
     codeExample: row.code_example as string | undefined,
     antiPattern: row.anti_pattern as string | undefined,
-    tags: JSON.parse((row.tags as string) || '[]'),
+    tags: safeJsonParse<string[]>(row.tags, [], 'knowledge_entries.tags'),
     timesApplied: row.times_applied as number,
     createdAt: row.created_at as string,
   };
@@ -63,11 +64,15 @@ export function registerKnowledgeHandlers(ipcMain: IpcMain, db: Database.Databas
       entry.antiPattern || null,
       JSON.stringify(entry.tags || [])
     );
-    return rowToKnowledge(q.getKnowledgeByProject.all(id)?.[0] as Record<string, unknown> ?? q.getAllKnowledge.all().find((r: unknown) => (r as Record<string, unknown>).id === id) as Record<string, unknown>);
+    // Look the row up by its own id. This used to call getKnowledgeByProject(id),
+    // whose WHERE is `project_id = ? OR project_id IS NULL` — passing an entry id as
+    // a project id matched every global entry and returned whichever sorted first,
+    // so the caller got back a different record than the one just created.
+    return rowToKnowledge(q.getKnowledgeById.get(id) as Record<string, unknown>);
   });
 
   ipcMain.handle('knowledge:update', (_event, id: string, updates: KnowledgeInput) => {
-    const existing = q.getAllKnowledge.all().find((r: unknown) => (r as Record<string, unknown>).id === id) as Record<string, unknown>;
+    const existing = q.getKnowledgeById.get(id) as Record<string, unknown> | undefined;
     if (!existing) throw new Error(`Knowledge entry ${id} not found`);
 
     q.updateKnowledge.run(
