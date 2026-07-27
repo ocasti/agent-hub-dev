@@ -348,6 +348,7 @@ Main tables:
 
 - Claude Code CLI installed and authenticated (`claude login`)
 - Git configured with user name and email
-- Node.js 20+
+- Node.js 22 LTS or 24 LTS (see `.nvmrc`). Node 20, 23 and 26+ are unsupported —
+  `npm install` enforces this via `engines` + `engine-strict`
 - Code Hosting CLI (optional): `gh` for GitHub, `bkt` for Bitbucket, etc.
 - MCP servers (optional): configured via plugins for PM tools, notifications, etc.

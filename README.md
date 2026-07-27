@@ -211,7 +211,13 @@ Before using Agent Hub, ensure you have:
   # Or: gemini, codex, copilot, kiro-cli, amp, etc.
   ```
 - **Git** configured with user name and email
-- **Node.js** 20+ — [nodejs.org](https://nodejs.org/)
+- **Node.js 22 LTS or 24 LTS** — [nodejs.org](https://nodejs.org/). The repo ships an
+  `.nvmrc`, so `nvm use` picks the right one.
+
+  > Node 26+ is **not** supported: `better-sqlite3` publishes no prebuilt binary for it
+  > and compiling from source fails. Node 20 and 23 are also unsupported
+  > (`@electron/rebuild` needs ≥ 22.12; `vitest` doesn't support 23). `npm install`
+  > checks this and stops with a clear message rather than failing inside node-gyp.
 - **Specify CLI** (recommended) — configures SDD Kit per agent:
   ```bash
   uv tool install specify-cli
@@ -235,6 +241,9 @@ Before using Agent Hub, ensure you have:
 # Clone the repository
 git clone https://github.com/agent-hub/agent-hub.git
 cd agent-hub
+
+# Use the supported Node version (see .nvmrc)
+nvm use
 
 # Install dependencies
 npm install
