@@ -152,9 +152,38 @@ hardening **ya están corregidas** (commit `2035460`):
 | **Integración PM ↔ código ↔ revisión** | Poco común | **Defendible** |
 | **Aprendizaje que retroalimenta prompts** | Raro (y aquí está sin cerrar) | **Defendible si se completa** |
 
-**Tesis recomendada:** dejar de competir en "ejecutar agentes" y posicionarse en
-**"el bucle de calidad de un equipo"** — desde el requisito hasta el PR aprobado, con
-memoria entre tareas. Eso encaja exactamente con la metodología de bucles.
+**Tesis del producto (decidida):** Agent Hub no compite con los agentes, los
+**orquesta**. La combinación defendible es **SDD + loop engineering sobre cualquier
+proveedor** — de pago, gratuito o mezclado según la necesidad.
+
+Por qué esa posición es estructural y no temporal:
+
+- **Ningún proveedor puede copiarla sin canibalizarse.** Anthropic no va a orquestar
+  Gemini ni opencode; Google no va a orquestar Claude. La neutralidad de proveedor
+  solo la puede ofrecer alguien que no venda un agente.
+- **Los competidores multi-agente son gestores de sesión, no de proceso.** JetBrains
+  Air y Claude Squad lanzan agentes y te dan paneles. Ninguno impone spec → plan →
+  implementación → quality gate → PR → aprendizaje. La intersección "cualquier
+  proveedor" × "proceso obligatorio" está libre.
+- **Coste marginal cero es alcanzable.** opencode trae modelos zen gratuitos y Gemini
+  da 1.000 peticiones diarias con cuenta de Google: el bucle SDD completo puede correr
+  sin gastar un céntimo. Eso es imposible de igualar para un vendor.
+- **Mezclar por fase es un argumento de calidad, no solo de coste.** Loop engineering
+  prescribe la separación *maker/checker*: quien revisa no debe ser quien escribió,
+  porque arrastra sesgo sobre su propio código. Asignar agente por fase **es** ese
+  mecanismo. Implementar con uno y revisar con otro es metodológicamente correcto,
+  no un truco de ahorro.
+- **Cobertura ante riesgo de proveedor**: cambios de precio, cuotas, caídas. El
+  mecanismo de fallback ya existe.
+
+**Decisión sobre tiers (2026-07-27):** se mantiene el gating actual —
+free `global_only`, registered `per_project`, premium `per_phase`. Queda registrado
+el riesgo asociado: el usuario que busca agentes gratuitos es el que menos puede
+mezclarlos, así que la propuesta de valor de "mezcla lo que quieras" no es visible
+en el tier de entrada. Revisar si la conversión free→registered se estanca.
+
+**Consecuencia para el plan:** la paridad entre agentes deja de ser un arreglo y pasa
+a ser la columna vertebral (§2.4).
 
 ### 2.2 Loop engineering
 
@@ -204,6 +233,108 @@ que el código, y *"la postura cómoda es la peligrosa"*.
 
 Implementación de referencia con siete patrones de bucle listos (Daily Triage, PR
 Babysitter, CI Sweeper, Dependency Sweeper…): <https://github.com/cobusgreyling/loop-engineering>
+
+### 2.4 Perfiles de agente — resolver el acoplamiento a Claude con la metodología de plugins
+
+**El problema.** Los prompts de fase están escritos para Claude: dicen "usa tu
+herramienta Edit" (`prompt-builder.ts:94`) y emiten comandos de barra `/speckit.*`
+(`:84-85,119,167`). Existe un hook `transformPrompt` en la interfaz de adaptadores
+(`agents/types.ts:39`), se aplica en `agents/registry.ts:190`, pero **ningún adaptador
+lo implementa**. Resultado: Gemini y opencode reciben instrucciones diseñadas para
+otro agente, rinden peor, y el usuario concluye que "el agente gratuito es malo".
+Esto sabotea la tesis del producto desde dentro.
+
+**El enfoque.** En vez de escribir un `transformPrompt` en TypeScript por agente,
+aplicar la misma metodología que los plugins: **un artefacto declarativo en disco,
+cargado y validado en tiempo de ejecución**. Un "perfil de agente".
+
+Piezas ya existentes que se reutilizan:
+
+| Pieza | Dónde | Uso |
+|---|---|---|
+| Motor de plantillas `{var}` | `plugins/engine.ts:8-15` | Expandir `{prompt}`, `{model}`, `{cwd}` |
+| Convención de directorio de usuario | `plugins/loader.ts:5-11` | `~/.config/agent-hub/agents/` |
+| Patrón de carga + validación de id | `plugins/loader.ts:84-101` | Mismo validador |
+
+**Forma del perfil** (borrador):
+
+```jsonc
+{
+  "id": "gemini",
+  "name": "Gemini CLI",
+  "binary": "gemini",
+  "extraPathDirs": ["~/.npm-global/bin"],
+
+  "version": { "args": ["--version"], "regex": "(\\d+\\.\\d+\\.\\d+(?:[-+][\\w.\\-]+)?)" },
+
+  "run": {
+    "args": ["-p", "{prompt}", "-m", "{model}", "--approval-mode", "yolo", "--skip-trust"],
+    "promptVia": "argument",   // argument | stdin | file
+    "stdin": "close"           // close | pipe | ignore  ← evita el cuelgue de opencode
+  },
+  "env": { "GEMINI_CLI_TRUST_WORKSPACE": "true" },
+
+  "models": { "supported": true, "values": ["auto","pro","flash","flash-lite"], "default": "flash" },
+
+  "auth": { "failExitCodes": [41], "hint": "Ejecuta `gemini` una vez o exporta GEMINI_API_KEY" },
+
+  "exitCodes": {
+    "fatal": { "41": "No autenticado", "55": "Carpeta no confiable — falta --skip-trust" },
+    "turnLimit": 53
+  },
+
+  "configFolder": ".gemini/",
+  "speckitProbe": ["home", "project"],
+
+  "capabilities": { "slashCommands": false, "mcp": false, "budgetFlag": null },
+
+  "prompt": {
+    "substitutions": [
+      { "match": "your Edit tool", "replace": "your file-editing tool" },
+      { "match": "/speckit\\.(\\w+)", "replace": "the speckit $1 workflow", "when": "!slashCommands" }
+    ],
+    "phaseOverrides": { "4": "…cuerpo alternativo completo para la fase Ship…" }
+  },
+
+  "markers": { "tailChars": 4000 }
+}
+```
+
+**Lo que este único cambio resuelve a la vez**, todo lo que hoy son parches sueltos:
+
+- El `--skip-trust` de Gemini pasa a ser dato, no un arreglo de código.
+- El cuelgue de opencode con stdin abierto pasa a ser un campo declarado.
+- El mapeo código de salida → mensaje accionable pasa a ser dato.
+- La sonda del SDD Kit contempla `home` y `project`, eliminando el falso negativo.
+- `capabilities.supported` mata los `=== 'claude'` incrustados en la UI.
+- `transformPrompt` deja de ser un hook vacío y pasa a ser una tabla de sustituciones.
+- **Los agentes dejan de ser constantes de compilación**: un usuario añade un
+  proveedor sin esperar a una release. Eso es lo que hace realmente cierta la tesis
+  de "orquesta cualquier proveedor".
+
+**Cuatro advertencias, todas importantes:**
+
+1. **No construir sobre el motor de plugins actual.** Es el subsistema menos sano del
+   repo (§3): fases y enriquecimiento son código muerto, MCP por stdio está rechazado,
+   no hay validación de manifiestos y la guía está mal. Reutilizar el **patrón** y el
+   cargador, sí; colgarse del `engine.ts` de hooks y MCP, no — los perfiles de agente
+   no necesitan ni hooks ni MCP, solo sustitución de plantillas.
+2. **`buildRunArgs` debe expandirse solo como argv, nunca como cadena de shell.** Un
+   perfil es configuración ejecutable: define los argumentos de un proceso que se
+   lanza. Expandir `{prompt}` dentro de una cadena que pasa por shell sería una
+   inyección de comandos con el texto de la tarea. Array de argumentos siempre, `shell:false` siempre.
+3. **Un perfil de la comunidad es código, no configuración.** Instalar un perfil
+   ajeno equivale a ejecutar un binario arbitrario con los argumentos que ese perfil
+   decida. Debe pedir la misma confirmación explícita que un plugin de nivel 2, y
+   validar que `binary` no contenga rutas ni separadores.
+4. **Sin forma de probar un perfil, la gente publicará perfiles rotos** — exactamente
+   lo que pasó con la guía de plugins. La acción "Probar agente" (fase A, punto 2) es
+   requisito previo, no un extra.
+
+**Límite conocido:** la sustitución por regex sirve para deltas pequeños ("Edit tool"
+→ "file-editing tool"). Cuando un agente carece de una capacidad estructural —sin
+comandos de barra, sin modo plan— hace falta un cuerpo de prompt alternativo completo.
+Por eso el perfil admite `phaseOverrides` además de `substitutions`.
 
 ### 2.3 Ahorro de tokens — conclusión contraintuitiva
 
@@ -330,10 +461,17 @@ migraciones) ni retención, y se consulta con `ORDER BY created_at` cada 3 segun
 
 Objetivo: que lo que ya existe funcione y sea diagnosticable.
 
+0. **Perfiles de agente declarativos (§2.4).** Es el habilitador del resto: convierte
+   los puntos 1 y 3 en datos en vez de código, y hace cierta la tesis de "cualquier
+   proveedor". Orden sugerido: definir el esquema y el validador → migrar Claude y
+   Gemini a perfiles (paridad de comportamiento, sin cambios visibles) → añadir
+   opencode como tercer perfil → exponer `~/.config/agent-hub/agents/` para perfiles
+   de usuario.
 1. **Arreglar Gemini.** `--skip-trust` + `GEMINI_CLI_TRUST_WORKSPACE=true`; quitar el
    `-p ''` vacío; `--approval-mode yolo` en vez de `-y`; pasar `-m`; completar
    `fatalExitCodes` con 54, 55 y 130 y dar mensajes accionables por código (41 → "no
    autenticado, ejecuta…"). Sondear el SDD Kit también en el directorio del proyecto.
+   *(Si el punto 0 va primero, esto es escribir un archivo JSON.)*
 2. **Detección con diagnóstico.** Cambiar `checkInstalled` para devolver
    `{ installed, version, errorKind, resolvedPath, stderr }`, cachear el resultado por
    sesión, y añadir un botón "Probar agente" que muestre el comando y su salida cruda.
