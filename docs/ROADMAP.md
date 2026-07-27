@@ -336,6 +336,153 @@ Piezas ya existentes que se reutilizan:
 comandos de barra, sin modo plan— hace falta un cuerpo de prompt alternativo completo.
 Por eso el perfil admite `phaseOverrides` además de `substitutions`.
 
+### 2.5 Diseño del bucle de QA
+
+Esta sección responde a: *¿cómo se ve el QA en bucle, y cómo encadenar fases del tipo
+dev API → QA → consumo, sirviendo igual a front y a back?*
+
+#### El punto de partida
+
+Hoy la fase 3 hace: tests pasan → revisión IA → fix si hay problemas → recomprobar,
+con tope de iteraciones. Cuatro huecos concretos:
+
+| Hueco | Evidencia |
+|---|---|
+| No hay escalón determinista previo | No existe typecheck ni lint en ninguna fase; se gastan tokens revisando código que puede no compilar |
+| El veredicto es texto en el transcript | `output-parser.ts` busca marcadores; no hay salida legible por máquina |
+| Proyecto sin tests = quality gate verde | `test-runner.ts:43-46` devuelve `pass: true` cuando no hay comando configurado |
+| Test que expira cuenta como arreglado | `test-runner.ts:137` — `if (testResult.pass \|\| testResult.timedOut)` |
+| Revisa el mismo agente que implementó | Sin separación maker/checker |
+| No hay dependencias entre tareas | Cada tarea es una isla; no se puede modelar "la API antes que el front" |
+
+#### A. La escalera de verificación (dentro de una tarea)
+
+Sustituir el quality gate único por **niveles ordenados por coste creciente**. Regla
+dura: no se ejecuta el nivel N+1 hasta que el N está verde.
+
+| Nivel | Qué | Coste | Agente |
+|---|---|---|---|
+| **T0 estático** | typecheck, lint, formato | ~0, determinista | ninguno |
+| **T1 tests** | unit + integración, salida legible por máquina | 0 tokens | ninguno |
+| **T2 contrato** | ¿el artefacto cumple el contrato que declara? | 0 tokens | ninguno |
+| **T3 revisión** | LLM-as-judge sobre criterios de aceptación | caro | **distinto al implementador** |
+
+El ahorro no es marginal: hoy un error de compilación consume una ronda completa de
+revisión por IA antes de descubrirse.
+
+#### B. Perfiles de verificador — cómo esto sirve igual a front y a back
+
+**La escalera es universal; los verificadores son por stack.** Misma metodología
+declarativa que los perfiles de agente (§2.4): un artefacto por proyecto, no código.
+
+```jsonc
+// Backend (API en Node)
+{ "verifiers": [
+  { "tier": "static",   "name": "types",    "cmd": "npx tsc --noEmit",                  "parse": "exitCode" },
+  { "tier": "static",   "name": "lint",     "cmd": "npm run lint",                      "parse": "exitCode" },
+  { "tier": "test",     "name": "unit",     "cmd": "npx vitest run --reporter=json",    "parse": "json",
+                        "failuresPath": "numFailedTests" },
+  { "tier": "contract", "name": "openapi",  "cmd": "npx @redocly/cli lint openapi.yaml","parse": "exitCode" },
+  { "tier": "review",   "name": "ai",       "agent": "{reviewAgent}" }
+]}
+
+// Frontend — misma escalera, verificadores distintos
+{ "verifiers": [
+  { "tier": "static",   "name": "types",    "cmd": "npx tsc --noEmit",                  "parse": "exitCode" },
+  { "tier": "test",     "name": "component","cmd": "npx vitest run --reporter=json",    "parse": "json" },
+  { "tier": "test",     "name": "e2e",      "cmd": "npx playwright test --reporter=json","parse": "json" },
+  { "tier": "contract", "name": "a11y",     "cmd": "npx axe ./dist",                    "parse": "exitCode" },
+  { "tier": "review",   "name": "ai",       "agent": "{reviewAgent}" }
+]}
+```
+
+Esto además sustituye el `test_command` único por algo que refleja la realidad de un
+proyecto, y da salida legible por máquina en vez de adivinar por el código de salida.
+
+#### C. QA como fase con agente propio
+
+La separación maker/checker deja de ser teoría: una política `reviewAgent ≠
+implementAgent`, apoyada en la resolución por fase que ya existe. **Aquí es donde la
+mezcla de proveedores paga doble**: implementar con el agente fuerte y revisar con uno
+gratuito (o al revés) es a la vez ahorro y calidad, porque el revisor no arrastra el
+sesgo de haber escrito el código.
+
+#### D. Cadenas de tareas — el caso "dev API → QA → consumo"
+
+Es la pieza que hoy no existe y la que hace falta para el escenario planteado.
+
+Modelo propuesto: una tarea puede declarar **qué produce** y **de qué depende**.
+
+```jsonc
+{ "id": "task-api",  "provides": { "contract": "openapi.yaml#/paths/~1orders" } }
+{ "id": "task-web",  "dependsOn": ["task-api"] }
+```
+
+- `task-web` permanece en estado `blocked` hasta que `task-api` **supera su nivel T2**
+  (contrato), no solo hasta que "termina".
+- Al desbloquearse, **se inyecta el contrato en el prompt del consumidor**, no el
+  código del productor.
+
+Ese último punto es el que hace viable la cadena. Sin contrato, la tarea de front
+tiene que leerse el código del back: caro en tokens, frágil ante refactors y sin
+señal de ruptura. Con contrato, el consumidor recibe una entrada pequeña y estable, y
+además se puede **detectar deriva** cuando el productor lo cambia.
+
+Formas de contrato según la capa: fragmento OpenAPI o JSON Schema más un ejemplo de
+petición y respuesta para una API; firmas de tipos exportados para una librería;
+interfaz de props más historias para un componente de UI.
+
+#### E. Tipos de bucle (las automatizaciones programadas)
+
+El componente de loop engineering que falta por completo. Cada uno con su nivel de
+autonomía:
+
+| Bucle | Qué hace | Cadencia |
+|---|---|---|
+| **Contract drift** | Compara lo que el consumidor espera con el contrato actual del productor; abre tarea si divergen | por push |
+| **Regression sweeper** | Corre la suite sobre la rama principal; abre tarea por cada fallo nuevo | diaria |
+| **PR babysitter** | Vigila comentarios de revisión y dispara Fetch & Fix | por webhook o intervalo |
+| **Flaky detector** | Detecta tests que fallan de forma intermitente | semanal |
+
+Los adaptadores de code hosting ya existentes cubren la mitad del trabajo.
+
+#### F. Terminación — lo que hace que el bucle sea seguro
+
+Tres condiciones de parada **independientes**. Hoy solo existe la primera:
+
+1. **Tope de iteraciones** — ya existe (`on:quality_max_loops`).
+2. **Tope de presupuesto** — `--max-budget-usd` en Claude; para el resto, reloj más
+   contabilidad propia. Hoy no existe ninguno.
+3. **Detector de no-progreso** — *el que falta y el más importante*. Se hace un hash de
+   la firma del fallo (test que falla + mensaje normalizado); si dos iteraciones
+   consecutivas producen el mismo hash, **el bucle no está progresando**: se detiene y
+   escala a un humano.
+
+El punto 3 resuelve de forma genérica el punto muerto D8 (`test_fixing` sin salida):
+en vez de rebotar hasta agotar reintentos y quedarse encallado, el bucle detecta que
+está repitiendo el mismo fallo y para con un diagnóstico.
+
+#### G. Autonomía progresiva
+
+Ningún bucle nace desatendido:
+
+| Nivel | Comportamiento |
+|---|---|
+| **L1** | Solo reporta: abre tarea con el hallazgo, no toca código |
+| **L2** | Implementa y abre PR; un humano mergea |
+| **L3** | Desatendido hasta el merge |
+
+Por proyecto y por tipo de bucle. L3 solo tras historial demostrado en L2.
+
+#### Huecos a cerrar antes de construir esto
+
+- Proyecto sin tests devuelve verde (`test-runner.ts:43-46`): a partir de L2 debería
+  ser aviso explícito, no un pase silencioso.
+- Test que expira cuenta como arreglado (`test-runner.ts:137`): un deadlock de la
+  suite es precisamente lo que el bucle debe detectar, no ignorar.
+- Sin `--output-format json` no hay medición de coste, y sin medición el tope de
+  presupuesto del punto F.2 es inaplicable (fase B del plan).
+
 ### 2.3 Ahorro de tokens — conclusión contraintuitiva
 
 **`rtk.ia` es `rtk-ai/rtk`** (73k ★, Rust, Apache-2.0). Comprime la salida de los
@@ -504,18 +651,30 @@ Nada de lo que sigue tiene sentido sin datos.
 
 Aquí es donde el producto deja de ser un lanzador de agentes.
 
-11. **Escalón de verificación determinista** (typecheck + lint) antes de la revisión
-    por IA en la fase 3. Coste cero, ahorro inmediato.
-12. **Topes de presupuesto e iteración por tarea**: `--max-budget-usd` y `--max-turns`
-    en Claude; equivalente externo para los demás agentes.
-13. **Niveles de autonomía L1/L2/L3** por proyecto, con L3 detrás de historial.
-14. **Separación maker/checker**: política de "el agente revisor ≠ el implementador",
-    reutilizando la resolución por fase que ya existe.
-15. **Automatizaciones programadas** (CI Sweeper, PR Babysitter): el componente que
-    falta de la metodología, y encaja natural con los adaptadores existentes.
-16. **Hooks `PreToolUse` por proyecto** generados a partir del `test_command` conocido,
-    para filtrar salidas verbosas. Esta es la alternativa recomendada a rtk.
-17. **Resolver la tensión modelo-por-fase vs caché** y documentarla como elección
+Diseño completo en §2.5. Orden de implementación:
+
+11. **Escalera de verificación por niveles** (§2.5.A) con **perfiles de verificador
+    declarativos** por proyecto (§2.5.B). Empezar por T0 (typecheck + lint): coste
+    cero, ahorro inmediato, y es el escalón que evita revisar por IA código que ni
+    compila. De paso sustituye el `test_command` único por algo que refleja la
+    realidad de un proyecto, y sirve igual a front y a back sin ramificar el motor.
+12. **Detector de no-progreso** (§2.5.F.3): hash de la firma del fallo; dos
+    iteraciones iguales seguidas detienen el bucle y escalan. Resuelve de forma
+    genérica el punto muerto D8, así que conviene antes que los topes.
+13. **Topes de presupuesto e iteración por tarea**: `--max-budget-usd` y `--max-turns`
+    en Claude; equivalente externo para los demás agentes. Depende de la fase B.
+14. **Separación maker/checker** (§2.5.C): política de "agente revisor ≠
+    implementador", sobre la resolución por fase que ya existe.
+15. **Cadenas de tareas con contrato** (§2.5.D): `provides` / `dependsOn`, estado
+    `blocked`, e inyección del contrato —no del código— en el prompt del consumidor.
+    Es lo que habilita el escenario dev API → QA → consumo.
+16. **Niveles de autonomía L1/L2/L3** (§2.5.G) por proyecto y tipo de bucle.
+17. **Automatizaciones programadas** (§2.5.E: contract drift, regression sweeper, PR
+    babysitter, flaky detector): el componente que falta de la metodología, y encaja
+    natural con los adaptadores existentes.
+18. **Hooks `PreToolUse` por proyecto** generados a partir de los verificadores
+    conocidos, para filtrar salidas verbosas. Alternativa recomendada a rtk.
+19. **Resolver la tensión modelo-por-fase vs caché** y documentarla como elección
     explícita por proyecto.
 
 ### Fase D — Ecosistema (continuo)
