@@ -116,9 +116,16 @@ export const PHASE_LABELS: Record<number, string> = {
 // and components, and drifted: a status added to one list and missed in another
 // leaves tasks either invisible to the queue or permanently counted as running.
 
-/** A workflow is actively executing — occupies a concurrency slot. */
+/**
+ * A workflow is actively executing — occupies a concurrency slot.
+ *
+ * Every status an agent phase can leave behind must be listed here, or a crash
+ * during that phase leaves the row counted as active forever: startup
+ * reconciliation skips it and the concurrency counter never frees the slot.
+ * On the free tier (max_concurrent = 1) one such row blocks every project.
+ */
 export const RUNNING_STATUSES = [
-  'spec_review', 'planning', 'implementing', 'reviewing', 'shipping', 'pr_fixing',
+  'spec_review', 'planning', 'implementing', 'reviewing', 'fixing', 'shipping', 'pr_fixing',
 ] as const;
 
 /** Waiting on the user or on an external event — does NOT occupy a slot. */

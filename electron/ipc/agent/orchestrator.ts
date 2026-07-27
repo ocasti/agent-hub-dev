@@ -620,6 +620,17 @@ export async function orchestrateSddWorkflow(
     sendPhaseUpdate(getWindow, { taskId, phase: -1, phaseLabel: 'failed', status: 'failed' });
     sendNotification('workflow_failed', 'Task failed', `${taskTitle || 'Task'} — ${(err as Error).message}`);
     fireHook('on:workflow_failed', { taskId, projectId: taskProjectId, projectPath: taskProjectPath, taskTitle, error: (err as Error).message }, db).catch(() => {});
+  } finally {
+    // Release the slot on EVERY exit path. Several phase-failure branches returned
+    // without deleting, and since `agent:run` now refuses to start a task that still
+    // has a controller, a leaked entry made the task impossible to retry for the rest
+    // of the session.
+    //
+    // Only remove our own controller: the spec-edit and replan paths hand over to a
+    // recursive run that registers its own, and that one must not be cleared here.
+    if (activeControllers.get(taskId) === controller) {
+      activeControllers.delete(taskId);
+    }
   }
 }
 

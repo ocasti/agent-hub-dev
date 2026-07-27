@@ -275,6 +275,14 @@ app.whenReady().then(() => {
   // App version
   ipcMain.handle('app:getVersion', () => app.getVersion());
 
+  // Order matters: worktree cleanup keeps a worktree only while its task is in a
+  // workflow status, and 'queued' is not one of them. Reconciling first would mark
+  // interrupted tasks as queued and then delete their worktrees, destroying every
+  // uncommitted change the agent had made.
+  console.log('[startup] cleaning orphan worktrees...');
+  try { cleanOrphanWorktrees(db); } catch (err) { console.error('[startup] cleanOrphanWorktrees error:', err); }
+  console.log(`[startup] worktree cleanup done (${Date.now() - t0}ms)`);
+
   // Requeue tasks left mid-flight by a crash or a quit during a phase.
   // Their orchestration is gone but their status still reads as running, so the
   // concurrency counter treats them as occupying a slot forever — with
@@ -284,11 +292,6 @@ app.whenReady().then(() => {
     const reconciled = reconcileInFlightTasks(db);
     if (reconciled > 0) console.log(`[startup] requeued ${reconciled} interrupted task(s)`);
   } catch (err) { console.error('[startup] reconcileInFlightTasks error:', err); }
-
-  // Clean orphan worktrees from previous sessions
-  console.log('[startup] cleaning orphan worktrees...');
-  try { cleanOrphanWorktrees(db); } catch (err) { console.error('[startup] cleanOrphanWorktrees error:', err); }
-  console.log(`[startup] worktree cleanup done (${Date.now() - t0}ms)`);
 
   // Background license validation 3s after window creation.
   // Calls the function directly: `ipcMain.emit` does not invoke an `ipcMain.handle`
