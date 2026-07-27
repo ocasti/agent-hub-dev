@@ -30,6 +30,8 @@ agent-hub/
 ├── ARCHITECTURE.md                # Detailed architecture
 ├── SPEC.md                        # Formal project spec
 ├── CHANGELOG.md                   # Version history
+├── README.md
+├── SETUP.md                       # Development environment setup
 ├── REFERENCE-UI.jsx               # Functional React prototype (visual reference)
 ├── docs/
 │   └── PLUGIN-DEVELOPMENT.md     # Complete plugin creation guide
@@ -49,38 +51,52 @@ agent-hub/
 │   │   │   ├── output-parser.ts   # Phase output parsing
 │   │   │   ├── git-ops.ts         # Branch, commit, push operations
 │   │   │   ├── pr-feedback.ts     # Fetch & Fix cycle (via code-hosting adapter)
+│   │   │   ├── github-api.ts      # Low-level GitHub API helpers (gh CLI)
+│   │   │   ├── bitbucket-api.ts   # Low-level Bitbucket API helpers (bkt CLI)
 │   │   │   ├── test-runner.ts     # Native test detection & execution
 │   │   │   ├── repo-analysis.ts   # Project analysis & AGENT.md generation
 │   │   │   ├── state.ts           # Resolver maps & helpers
 │   │   │   ├── worktree.ts        # Git worktree management (create, remove, symlink, merge, conflicts)
 │   │   │   ├── types.ts           # Shared interfaces & constants
-│   │   │   └── agents/            # Multi-agent adapter system
-│   │   │       ├── types.ts       # AgentAdapter interface, AgentRunOptions
-│   │   │       ├── claude-adapter.ts  # Claude Code CLI adapter
-│   │   │       ├── generic-adapter.ts # Config-driven adapter for all other CLIs
-│   │   │       ├── registry.ts    # Agent registry, resolution, failover
-│   │   │       └── index.ts       # Re-exports + auto-registration
+│   │   │   ├── agents/            # Multi-agent adapter system
+│   │   │   │   ├── types.ts       # AgentAdapter interface, AgentRunOptions, GenericAgentDef
+│   │   │   │   ├── claude-adapter.ts  # Claude Code CLI adapter
+│   │   │   │   ├── generic-adapter.ts # Config-driven adapter for all other CLIs (+ exit code interpretation)
+│   │   │   │   ├── registry.ts    # Agent registry, strict resolution, failover
+│   │   │   │   └── index.ts       # Re-exports + auto-registration
 │   │   │   └── adapters/          # Code hosting adapter pattern
 │   │   │       ├── types.ts       # CodeHostingAdapter interface
 │   │   │       ├── github.ts      # GitHub adapter (gh CLI)
-│   │   │       ├── registry.ts    # Adapter registry + credential resolver
+│   │   │       ├── bitbucket.ts   # Bitbucket adapter (bkt CLI — Cloud & Data Center)
+│   │   │       ├── registry.ts    # Dynamic adapter registry (lazy, plugin-gated) + credential resolver
 │   │   │       └── index.ts       # Re-exports
 │   │   ├── plugins/               # Plugin system
+│   │   │   ├── index.ts           # IPC handler registration
 │   │   │   ├── loader.ts          # Read & parse plugin manifests
 │   │   │   ├── engine.ts          # Hook dispatch, template resolution
 │   │   │   ├── installer.ts       # Install/uninstall wizard logic
+│   │   │   ├── mcp-client.ts      # MCP tool call dispatch for plugin operations
 │   │   │   └── types.ts           # Plugin interfaces
 │   │   ├── tasks.ts               # IPC handlers: task CRUD
 │   │   ├── projects.ts            # IPC handlers: project CRUD
 │   │   ├── skills.ts              # IPC handlers: read/write settings.json
-│   │   └── knowledge.ts           # IPC handlers: knowledge base
+│   │   ├── knowledge.ts           # IPC handlers: knowledge base
+│   │   ├── github.ts              # IPC handlers: GitHub-specific operations
+│   │   ├── dialog.ts              # IPC handlers: native dialogs
+│   │   ├── license.ts             # IPC handlers: license & tier validation
+│   │   ├── notifications.ts       # IPC handlers: desktop notifications
+│   │   └── updates.ts             # IPC handlers: app update checks
 │   └── db/
 │       ├── index.ts               # SQLite connection + migrations
-│       ├── migrations.ts          # SQL migrations
+│       ├── migrations.ts          # Migrations v1–v19 (source of truth)
 │       └── queries.ts             # Prepared queries
 ├── plugins/
-│   └── registry/                  # Built-in plugin manifests
-│       └── github/                # Default code-hosting plugin
+│   └── registry/
+│       └── catalog.json           # Bundled plugin catalog (synced from plugin-registry/)
+├── plugin-registry/               # Plugin source-of-truth (manifests + build scripts)
+│   ├── catalog.json
+│   ├── plugins/                   # github/, bitbucket/, jira/
+│   └── scripts/                   # Catalog generation
 ├── src/
 │   ├── App.tsx                    # Main app
 │   ├── main.tsx                   # Entry point
@@ -88,11 +104,12 @@ agent-hub/
 │   ├── components/
 │   │   ├── Sidebar.tsx
 │   │   ├── Dashboard.tsx
-│   │   ├── TasksView.tsx
+│   │   ├── TasksView.tsx          # + multi-select filters (projects/statuses)
 │   │   ├── TaskDetail.tsx
 │   │   ├── TaskForm.tsx           # + PM select/URL + Refine with AI
+│   │   ├── BulkImportModal.tsx    # Bulk task import
 │   │   ├── ProjectsView.tsx
-│   │   ├── ProjectForm.tsx        # + plugin activation per project
+│   │   ├── ProjectForm.tsx        # + plugin activation + agent & model per project
 │   │   ├── WorkflowView.tsx       # Dynamic phases from core + plugins
 │   │   ├── PluginsView.tsx        # Plugin store, install, configure
 │   │   ├── SkillsView.tsx
@@ -100,20 +117,28 @@ agent-hub/
 │   │   ├── LogsView.tsx
 │   │   ├── SettingsView.tsx
 │   │   └── ui/
+│   │       ├── AboutModal.tsx
 │   │       ├── Badge.tsx
+│   │       ├── ConfirmModal.tsx
+│   │       ├── Icons.tsx
+│   │       ├── LoginModal.tsx
+│   │       ├── MultiSelectDropdown.tsx
+│   │       ├── ProgressBar.tsx    # Dynamic phases from core + plugins
 │   │       ├── SkillTag.tsx
-│   │       └── ProgressBar.tsx    # Dynamic phases from core + plugins
+│   │       └── UpgradePrompt.tsx
 │   ├── lib/
 │   │   ├── ipc.ts                 # Frontend IPC wrappers
-│   │   └── types.ts               # TypeScript interfaces
+│   │   ├── types.ts               # TypeScript interfaces
+│   │   ├── format.ts              # Formatting helpers
+│   │   ├── skills.ts              # Skills catalog helpers
+│   │   └── workflow.ts            # Workflow phase helpers
 │   └── hooks/
 │       └── useAgentLogs.ts        # Hook for real-time log streaming
 ├── database/
-│   └── migrations/
+│   └── migrations/                # Legacy SQL files (v1–v3); later migrations live in electron/db/migrations.ts
 │       ├── 001_initial.sql
 │       ├── 002_knowledge.sql
-│       ├── 003_review_patterns.sql
-│       └── 004_plugins.sql        # Plugin-related columns
+│       └── 003_review_patterns.sql
 └── public/
     └── icon.png
 ```
@@ -216,6 +241,17 @@ resolveAgentForPhase(db, projectId, phase):
   Premium:    project.ai_agent_phases[phase] → project.ai_agent → settings.default_ai_agent → 'claude'
 ```
 
+**Strict resolution (v2.5.0):** the configured agent is strictly respected — there is NO silent
+switch to Claude when the agent ID is unknown or the CLI is not installed. If the primary agent
+is missing, only the *configured* fallback is tried; otherwise the run fails with a clear error.
+
+**Exit code interpretation (non-Claude agents):** `GenericAgentDef` supports `fatalExitCodes`
+(e.g. Gemini 41/42/44/52 → always fail) and `turnLimitExitCode` (53 → check output before
+deciding). Gemini exit code 1 with valid SDD markers in the output is treated as success.
+
+**Model per project (v2.5.0):** the Claude model (sonnet/opus) is configured in ProjectForm
+(`projects.default_model`), only shown for Claude in single-agent mode — no longer per task.
+
 ### Key Files
 - `electron/ipc/agent/agents/types.ts` — AgentAdapter interface
 - `electron/ipc/agent/agents/registry.ts` — Resolution + failover logic
@@ -278,14 +314,17 @@ Every code review (AI or human) that finds and fixes an issue:
 
 ## Database — SQLite
 
+Migrations run from `electron/db/migrations.ts` (currently v1–v19). The SQL files in
+`database/migrations/` only cover the first three.
+
 Main tables:
-- projects: id, name, path, repo, description, optional_skills[], test_command, code_hosting, plugin_pm, plugin_pm_config
-- tasks: id, project_id, title, description, acceptance_criteria[], images[], model, status, pr_number, review_cycle, spec_suggestions[], plan_summary, branch_name, criteria_status, pm_work_item_id, pm_work_item_url
+- projects: id, name, path, repo, description, optional_skills[], test_command, code_hosting, code_hosting_config, plugin_pm, plugin_pm_config, ai_agent, ai_agent_phases, default_model
+- tasks: id, project_id, title, description, acceptance_criteria[], images[], model, status, pr_number, review_cycle, spec_suggestions[], plan_summary, last_phase, branch_name, worktree_path, criteria_status, plugin_context, pm_work_item_id, pm_work_item_url
 - agent_runs: id, task_id, phase, started_at, finished_at, result, output, error_output
 - logs: id, task_id, project_name, message, kind, created_at
 - knowledge_entries: id, project_id, category, severity, title, description, code_example, anti_pattern, times_applied
 - review_patterns: id, knowledge_id, task_id, reviewer, issue_found, fix_applied, auto_fixable
-- settings: key, value
+- settings: key, value — includes theme, locale, default_ai_agent, license_* (key/status/plan/limits), update_*, notifications_config, tasks_filter_projects/statuses
 
 ## Development Rules
 
@@ -310,5 +349,5 @@ Main tables:
 - Claude Code CLI installed and authenticated (`claude login`)
 - Git configured with user name and email
 - Node.js 20+
-- Code Hosting CLI (optional): `gh` for GitHub, `glab` for GitLab, etc.
+- Code Hosting CLI (optional): `gh` for GitHub, `bkt` for Bitbucket, etc.
 - MCP servers (optional): configured via plugins for PM tools, notifications, etc.

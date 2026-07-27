@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [2.5.0] — 2026-03-11 — Strict Multi-Agent Resolution & Project-Level Model
+
+### Added
+- **Exit code interpretation for non-Claude agents**: Gemini CLI exit code 1 with valid SDD markers in output is treated as success; fatal codes (41/42/44/52) always fail; turn limit (53) checks output before deciding
+- **`fatalExitCodes` and `turnLimitExitCode`** fields on `GenericAgentDef`
+- **Database migration 19**: `default_model` column on projects table
+
+### Changed
+- **Strict agent resolution**: the configured agent is now strictly respected — no silent fallback to Claude when the agent ID is not found or not installed; if the primary is missing, only the *configured* fallback is tried, otherwise the run fails with a clear error
+- **Model selector moved from TaskForm to ProjectForm** (sonnet/opus): shown only for Claude in single-agent mode; per-phase config defaults to sonnet
+
+### Removed
+- Dead `runClaudePhase()` code from `claude-cli.ts`
+
+---
+
 ## [2.4.0] — 2026-03-11 — Bitbucket Plugin, Jira Plugin & Adapter Decoupling
 
 ### Added
